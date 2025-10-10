@@ -21,6 +21,9 @@ import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import kotlin.math.max
 import kotlin.math.min
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 class ScreenRecordService : Service() {
 
@@ -33,8 +36,27 @@ class ScreenRecordService : Service() {
 
         const val MODEL_INPUT_SIZE = 640
         const val MODEL_OUTPUT_BOXES = 8400
-        val isServiceRunning = kotlinx.coroutines.flow.MutableStateFlow(false)
+
+        val isServiceRunning = MutableStateFlow(false)
+
+        // ✨ NEW: Performance tracking StateFlows for Dev Mode
+        private val _performanceMetrics = MutableStateFlow(PerformanceMetrics())
+        val performanceMetrics: StateFlow<PerformanceMetrics> = _performanceMetrics.asStateFlow()
+
+        private val _hazardStats = MutableStateFlow(HazardDetectionStats())
+        val hazardStats: StateFlow<HazardDetectionStats> = _hazardStats.asStateFlow()
+
+        private val _recentDetections = MutableStateFlow<List<Detection>>(emptyList())
+        val recentDetections: StateFlow<List<Detection>> = _recentDetections.asStateFlow()
     }
+
+    // ✨ NEW: Performance tracking variables
+    private var sessionStartTime = 0L
+    private var totalDetections = 0
+    private var confidenceSum = 0f
+    private var frameCount = 0
+    private var lastFrameTime = 0L
+    private var processingTimes = mutableListOf<Float>()
 
     private var mediaProjection: MediaProjection? = null
     private var projectionCallback: MediaProjection.Callback? = null
@@ -102,11 +124,22 @@ class ScreenRecordService : Service() {
 
     private fun startProjectionAndDetection(config: ScreenRecordConfig) {
         stopProjectionAndDetection()
+
+        // Reset performance metrics when starting detection
+        sessionStartTime = System.currentTimeMillis()
+        totalDetections = 0
+        confidenceSum = 0f
+        frameCount = 0
+        lastFrameTime = sessionStartTime
+        processingTimes.clear()
+        _performanceMetrics.value = PerformanceMetrics()
+        _hazardStats.value = HazardDetectionStats()
+        _recentDetections.value = emptyList()
+
         mediaProjection = projectionManager?.getMediaProjection(config.resultCode, config.data)
         val width = MODEL_INPUT_SIZE
         val height = MODEL_INPUT_SIZE
 
-        // 🔹 Register callback (Android 14+ requires this)
         projectionCallback = object : MediaProjection.Callback() {
             override fun onStop() {
                 super.onStop()
@@ -130,6 +163,8 @@ class ScreenRecordService : Service() {
         detectionJob = coroutineScope.launch {
             val reader = imageReader!!
             while (isActive && mediaProjection != null) {
+                val frameStartTime = System.currentTimeMillis() // ✨ Track processing time
+
                 val img = tryAcquire(reader)
                 if (img != null) {
                     val bmp = imageToBitmap(img)
@@ -137,13 +172,85 @@ class ScreenRecordService : Service() {
                     val input = prepareInput(bmp)
                     val output = runModel(input)
                     val dets = parseModelOutput(output, bmp.width, bmp.height)
+
+                    // Update performance metrics with real detection data
+                    updatePerformanceMetrics(dets, frameStartTime)
+
                     withContext(Dispatchers.Main) {
                         overlayView?.setDetections(dets)
                     }
+
+                    // Update recent detections for real-time Dev Mode display
+                    _recentDetections.value = dets
                 }
                 delay(200)
             }
         }
+    }
+
+    // Method to track real-time performance metrics
+    private fun updatePerformanceMetrics(detections: List<Detection>, frameStartTime: Long) {
+        val processingTime = (System.currentTimeMillis() - frameStartTime).toFloat()
+        val currentTime = System.currentTimeMillis()
+
+        frameCount++
+        totalDetections += detections.size
+
+        // Track processing times (keep last 10 for rolling average)
+        processingTimes.add(processingTime)
+        if (processingTimes.size > 10) {
+            processingTimes.removeAt(0)
+        }
+
+        // Calculate average confidence from actual detections
+        detections.forEach { detection ->
+            confidenceSum += detection.score
+        }
+
+        // Calculate real FPS based on session data
+        val sessionDuration = currentTime - sessionStartTime
+        val currentFps = if (sessionDuration > 0) (frameCount * 1000f) / sessionDuration else 0f
+
+        // Update performance metrics with real data
+        val avgConfidence = if (totalDetections > 0) confidenceSum / totalDetections else 0f
+        val avgProcessingTime = if (processingTimes.isNotEmpty()) processingTimes.average().toFloat() else 0f
+
+        _performanceMetrics.value = PerformanceMetrics(
+            totalDetections = totalDetections,
+            avgConfidence = avgConfidence,
+            processingTimeMs = avgProcessingTime,
+            fps = currentFps,
+            sessionDurationMs = sessionDuration
+        )
+
+        // Update hazard statistics with actual detection counts
+        updateHazardStats(detections)
+    }
+
+    // Method to track hazard type statistics
+    private fun updateHazardStats(detections: List<Detection>) {
+        val currentStats = _hazardStats.value
+        var pedestrians = currentStats.pedestrians
+        var potholes = currentStats.potholes
+        var animals = currentStats.animals
+        var roadWorks = currentStats.roadWorks
+
+        // Count detections by your model's label types
+        detections.forEach { detection ->
+            when (detection.label) {
+                "pedestrian" -> pedestrians++
+                "pothole" -> potholes++
+                "animals/humps" -> animals++
+                "roadworks" -> roadWorks++
+            }
+        }
+
+        _hazardStats.value = HazardDetectionStats(
+            pedestrians = pedestrians,
+            potholes = potholes,
+            animals = animals,
+            roadWorks = roadWorks
+        )
     }
 
     private fun stopProjectionAndDetection() {
@@ -155,7 +262,6 @@ class ScreenRecordService : Service() {
         imageReader?.close()
         imageReader = null
 
-        // 🔹 Unregister callback to avoid leaks
         projectionCallback?.let {
             mediaProjection?.unregisterCallback(it)
             projectionCallback = null
@@ -420,4 +526,20 @@ class ScreenRecordService : Service() {
     }
 
     data class Detection(val box: RectF, val label: String, val score: Float)
+
+    // ✨ NEW: Data classes for performance tracking
+    data class PerformanceMetrics(
+        val totalDetections: Int = 0,
+        val avgConfidence: Float = 0f,
+        val processingTimeMs: Float = 0f,
+        val fps: Float = 0f,
+        val sessionDurationMs: Long = 0L
+    )
+
+    data class HazardDetectionStats(
+        val pedestrians: Int = 0,
+        val potholes: Int = 0,
+        val animals: Int = 0,
+        val roadWorks: Int = 0
+    )
 }

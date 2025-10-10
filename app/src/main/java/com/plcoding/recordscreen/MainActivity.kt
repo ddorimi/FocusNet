@@ -379,16 +379,36 @@ fun HazardMenuScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DevModeScreen(onBack: () -> Unit) {
+    // Get real-time data from ScreenRecordService
+    val isServiceRunning by ScreenRecordService.isServiceRunning.collectAsStateWithLifecycle()
+    val performanceMetrics by ScreenRecordService.performanceMetrics.collectAsStateWithLifecycle()
+    val hazardStats by ScreenRecordService.hazardStats.collectAsStateWithLifecycle()
+    val recentDetections by ScreenRecordService.recentDetections.collectAsStateWithLifecycle()
+
+    var debugMode by remember { mutableStateOf(false) }
+    var loggingEnabled by remember { mutableStateOf(true) }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        text = "Dev Mode",
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Dev Mode",
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        // Live indicator
+                        if (isServiceRunning) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(Color.Green, androidx.compose.foundation.shape.CircleShape)
+                            )
+                        }
+                    }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -406,13 +426,256 @@ fun DevModeScreen(onBack: () -> Unit) {
         },
         containerColor = Color(0xFF2D4059)
     ) { innerPadding ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
-            contentAlignment = Alignment.Center
+                .padding(innerPadding)
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState())
         ) {
-            // THIS IS WHERE YOU PLACE THE CONTENT OF THE DEV MODE SCREEN
+            // Detection Status
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isServiceRunning) Color(0xFF1B5E20) else Color(0xFF424242)
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isServiceRunning) "🟢 Detection Active" else "🔴 Detection Stopped",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    if (isServiceRunning) {
+                        Text(
+                            text = "Live Detections: ${recentDetections.size}",
+                            color = Color.White,
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Real-time Performance Metrics
+            Text(
+                text = "📊 Real-time Performance",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                modifier = Modifier.height(200.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item {
+                    MetricCard(
+                        title = "Total Detections",
+                        value = "${performanceMetrics.totalDetections}",
+                        color = Color(0xFF4CAF50)
+                    )
+                }
+                item {
+                    MetricCard(
+                        title = "Avg Confidence",
+                        value = "${(performanceMetrics.avgConfidence * 100).toInt()}%",
+                        color = Color(0xFF2196F3)
+                    )
+                }
+                item {
+                    MetricCard(
+                        title = "Processing Time",
+                        value = "${performanceMetrics.processingTimeMs.toInt()}ms",
+                        color = Color(0xFFFF9800)
+                    )
+                }
+                item {
+                    MetricCard(
+                        title = "Session Duration",
+                        value = "${(performanceMetrics.sessionDurationMs / 1000)}s",
+                        color = Color(0xFF9C27B0)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Real Hazard Detection Analytics
+            Text(
+                text = "📈 Live Hazard Detection",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                modifier = Modifier.height(160.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item {
+                    HazardStatsCard("Pedestrians", hazardStats.pedestrians, Color(0xFFE91E63))
+                }
+                item {
+                    HazardStatsCard("Potholes/Humps", hazardStats.potholes, Color(0xFF795548))
+                }
+                item {
+                    HazardStatsCard("Animals", hazardStats.animals, Color(0xFF4CAF50))
+                }
+                item {
+                    HazardStatsCard("Road Works", hazardStats.roadWorks, Color(0xFFFF5722))
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Current Detections (if any)
+            if (recentDetections.isNotEmpty()) {
+                Text(
+                    text = "🎯 Current Frame Detections",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF3E5470))
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        recentDetections.forEach { detection ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = detection.label,
+                                    color = Color.White,
+                                    fontSize = 14.sp
+                                )
+                                Text(
+                                    text = "${(detection.score * 100).toInt()}%",
+                                    color = Color(0xFF4CAF50),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+// ==================== HELPER COMPOSABLES FOR DEV MODE ====================
+@Composable
+fun MetricCard(title: String, value: String, color: Color) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.1f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = title,
+                fontSize = 12.sp,
+                color = Color.White,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = value,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = color
+            )
+        }
+    }
+}
+
+@Composable
+fun ComparisonRow(metric: String, ssdValue: Float, focusNetValue: Float) {
+    val improvement = ((focusNetValue - ssdValue) / ssdValue * 100)
+
+    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+        Text(
+            text = metric,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            color = Color.White
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "SSD: ${(ssdValue * 100).toInt()}%",
+                fontSize = 12.sp,
+                color = Color(0xFFFF9800)
+            )
+            Text(
+                text = "FocusNet: ${(focusNetValue * 100).toInt()}%",
+                fontSize = 12.sp,
+                color = Color(0xFF4CAF50)
+            )
+            Text(
+                text = "${if (improvement > 0) "+" else ""}${improvement.toInt()}%",
+                fontSize = 12.sp,
+                color = if (improvement > 0) Color(0xFF4CAF50) else Color(0xFFFF5722),
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+fun HazardStatsCard(title: String, count: Int, color: Color) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.1f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = title,
+                fontSize = 11.sp,
+                color = Color.White,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "$count",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = color
+            )
         }
     }
 }
@@ -519,3 +782,32 @@ fun HazardButton(item: HazardItem) {
         Text(text = item.label, color = Color.White, fontSize = 14.sp)
     }
 }
+
+// ==================== DATA CLASSES FOR DEV MODE ====================
+data class PerformanceMetrics(
+    val totalDetections: Int = 0,
+    val avgConfidence: Float = 0f,
+    val processingTimeMs: Float = 0f,
+    val fps: Float = 0f,
+    val sessionDurationMs: Long = 0L
+)
+
+data class ModelComparison(
+    val ssdRecall: Float,
+    val ssdPrecision: Float,
+    val ssdF1Score: Float,
+    val ssdMAP: Float,
+    val focusNetRecall: Float,
+    val focusNetPrecision: Float,
+    val focusNetF1Score: Float,
+    val focusNetMAP: Float
+)
+
+data class HazardDetectionStats(
+    val pedestrians: Int = 0,
+    val potholes: Int = 0,
+    val animals: Int = 0,
+    val roadWorks: Int = 0
+)
+
+

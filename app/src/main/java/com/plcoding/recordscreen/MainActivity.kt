@@ -47,7 +47,6 @@ import com.plcoding.recordscreen.ScreenRecordService.Companion.STOP_RECORDING
 import com.plcoding.recordscreen.ui.theme.CoralRed
 import com.plcoding.recordscreen.ui.theme.RecordScreenTheme
 
-
 class MainActivity : ComponentActivity() {
     private val mediaProjectionManager by lazy {
         getSystemService<MediaProjectionManager>()!!
@@ -66,10 +65,13 @@ class MainActivity : ComponentActivity() {
                     )
                     Screen.HazardMenu -> HazardMenuScreen(
                         onBack = { currentScreen = Screen.Home },
-                        onNavigateToAboutUs = { currentScreen = Screen.AboutUs },
+                        onNavigateToDevMode = { currentScreen = Screen.DevMode },
                         mediaProjectionManager = mediaProjectionManager
                     )
                     Screen.AboutUs -> AboutUsScreen(
+                        onBack = { currentScreen = Screen.Home }
+                    )
+                    Screen.DevMode -> DevModeScreen(
                         onBack = { currentScreen = Screen.Home }
                     )
                 }
@@ -97,7 +99,7 @@ class MainActivity : ComponentActivity() {
 
 // Screen navigation enum
 enum class Screen {
-    Home, HazardMenu, AboutUs
+    Home, HazardMenu, AboutUs, DevMode
 }
 
 // ==================== HOME SCREEN ====================
@@ -179,7 +181,7 @@ fun FocusNetHomeScreen(
 @Composable
 fun HazardMenuScreen(
     onBack: () -> Unit,
-    onNavigateToAboutUs: () -> Unit,
+    onNavigateToDevMode: () -> Unit,
     mediaProjectionManager: MediaProjectionManager
 ) {
     val context = LocalContext.current
@@ -284,7 +286,6 @@ fun HazardMenuScreen(
             modifier = Modifier.fillMaxWidth(),
             contentAlignment = Alignment.CenterStart
         ) {
-
             Row(
                 modifier = Modifier
                     .padding(vertical = 10.dp)
@@ -361,15 +362,58 @@ fun HazardMenuScreen(
 
         Spacer(modifier = Modifier.weight(1f))
 
+        // Dev Mode link instead of About Us
         Text(
-            text = "About Us",
+            text = "Dev Mode",
             fontSize = 14.sp,
             color = Color.White,
             textDecoration = TextDecoration.Underline,
             modifier = Modifier
                 .padding(bottom = 20.dp)
-                .clickable { onNavigateToAboutUs() }
+                .clickable { onNavigateToDevMode() }
         )
+    }
+}
+
+// ==================== DEV MODE SCREEN ====================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DevModeScreen(onBack: () -> Unit) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = "Dev Mode",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color(0xFF2D4059)
+                )
+            )
+        },
+        containerColor = Color(0xFF2D4059)
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentAlignment = Alignment.Center
+        ) {
+            // THIS IS WHERE YOU PLACE THE CONTENT OF THE DEV MODE SCREEN
+        }
     }
 }
 

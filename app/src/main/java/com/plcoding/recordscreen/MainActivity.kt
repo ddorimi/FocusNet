@@ -24,7 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -67,10 +67,14 @@ class MainActivity : ComponentActivity() {
                     Screen.HazardMenu -> HazardMenuScreen(
                         onBack = { currentScreen = Screen.Home },
                         onNavigateToAboutUs = { currentScreen = Screen.AboutUs },
+                        onNavigateToDevMode = { currentScreen = Screen.DevMode },
                         mediaProjectionManager = mediaProjectionManager
                     )
                     Screen.AboutUs -> AboutUsScreen(
                         onBack = { currentScreen = Screen.Home }
+                    )
+                    Screen.DevMode -> DevModeScreen(
+                        onBack = { currentScreen = Screen.HazardMenu }
                     )
                 }
             }
@@ -97,7 +101,7 @@ class MainActivity : ComponentActivity() {
 
 // Screen navigation enum
 enum class Screen {
-    Home, HazardMenu, AboutUs
+    Home, HazardMenu, AboutUs, DevMode
 }
 
 // ==================== HOME SCREEN ====================
@@ -180,12 +184,15 @@ fun FocusNetHomeScreen(
 fun HazardMenuScreen(
     onBack: () -> Unit,
     onNavigateToAboutUs: () -> Unit,
+    onNavigateToDevMode: () -> Unit,
     mediaProjectionManager: MediaProjectionManager
 ) {
     val context = LocalContext.current
     val isServiceRunning by ScreenRecordService.isServiceRunning.collectAsStateWithLifecycle()
 
     var isVoiceAlertEnabled by remember { mutableStateOf(true) }
+    var selectedModel by remember { mutableStateOf("best_integer_quant.tflite") }
+    var isModelMenuExpanded by remember { mutableStateOf(false) }
 
     var hasNotificationPermission by remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -202,7 +209,12 @@ fun HazardMenuScreen(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         val intent = result.data ?: return@rememberLauncherForActivityResult
-        val config = ScreenRecordConfig(resultCode = result.resultCode, data = intent)
+        val config = ScreenRecordConfig(
+            resultCode = result.resultCode,
+            data = intent,
+            modelFileName = selectedModel,
+            isVoiceAlertEnabled = isVoiceAlertEnabled
+        )
         val serviceIntent = Intent(context, ScreenRecordService::class.java).apply {
             action = START_RECORDING
             putExtra(KEY_RECORDING_CONFIG, config)
@@ -244,7 +256,7 @@ fun HazardMenuScreen(
         ) {
             IconButton(onClick = onBack) {
                 Icon(
-                    Icons.Filled.ArrowBack,
+                    Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back",
                     tint = Color.White
                 )
@@ -278,6 +290,58 @@ fun HazardMenuScreen(
         }
 
         Spacer(modifier = Modifier.height(50.dp))
+
+        // Model Selection Dropdown
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 40.dp)
+        ) {
+            Column {
+                Text(
+                    text = "Select Model",
+                    fontSize = 14.sp,
+                    color = Color.White,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+                
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF3D5A80), RoundedCornerShape(8.dp))
+                        .clickable { isModelMenuExpanded = true }
+                        .padding(12.dp)
+                ) {
+                    Text(
+                        text = if (selectedModel == "best_integer_quant.tflite") "Model 1 (Default)" else "Model 2 (Alternative)",
+                        color = Color.White,
+                        fontSize = 14.sp
+                    )
+                }
+                
+                DropdownMenu(
+                    expanded = isModelMenuExpanded,
+                    onDismissRequest = { isModelMenuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Model 1 (Default)") },
+                        onClick = {
+                            selectedModel = "best_integer_quant.tflite"
+                            isModelMenuExpanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Model 2 (Alternative)") },
+                        onClick = {
+                            selectedModel = "model2.tflite"
+                            isModelMenuExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
 
         // Voice Alert Toggle
         Box(
@@ -361,15 +425,29 @@ fun HazardMenuScreen(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        Text(
-            text = "About Us",
-            fontSize = 14.sp,
-            color = Color.White,
-            textDecoration = TextDecoration.Underline,
+        // Navigation links
+        Row(
             modifier = Modifier
-                .padding(bottom = 20.dp)
-                .clickable { onNavigateToAboutUs() }
-        )
+                .fillMaxWidth()
+                .padding(bottom = 20.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            Text(
+                text = "About Us",
+                fontSize = 14.sp,
+                color = Color.White,
+                textDecoration = TextDecoration.Underline,
+                modifier = Modifier.clickable { onNavigateToAboutUs() }
+            )
+            
+            Text(
+                text = "Dev Mode",
+                fontSize = 14.sp,
+                color = Color.White,
+                textDecoration = TextDecoration.Underline,
+                modifier = Modifier.clickable { onNavigateToDevMode() }
+            )
+        }
     }
 }
 
@@ -384,7 +462,7 @@ fun AboutUsScreen(onBack: () -> Unit) {
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.Filled.ArrowBack,
+                            Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
                             tint = Color.White
                         )
@@ -415,7 +493,7 @@ fun AboutUsScreen(onBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Divider(color = Color.White, thickness = 1.5.dp)
+            HorizontalDivider(color = Color.White, thickness = 1.5.dp)
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -448,6 +526,193 @@ fun AboutUsScreen(onBack: () -> Unit) {
                 text = "FOCUSNet aims to support safer nighttime driving through intelligent and efficient object detection systems.",
                 fontSize = 16.sp,
                 color = Color.White
+            )
+        }
+    }
+}
+
+// ==================== DEV MODE SCREEN ====================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DevModeScreen(onBack: () -> Unit) {
+    val performanceMetrics by ScreenRecordService.performanceMetrics.collectAsStateWithLifecycle()
+    val hazardStats by ScreenRecordService.hazardStats.collectAsStateWithLifecycle()
+    val recentDetections by ScreenRecordService.recentDetections.collectAsStateWithLifecycle()
+    val isServiceRunning by ScreenRecordService.isServiceRunning.collectAsStateWithLifecycle()
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = "Dev Mode",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color(0xFF2D4059)
+                )
+            )
+        },
+        containerColor = Color(0xFF2D4059)
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            // Status Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isServiceRunning) Color(0xFF4CAF50) else Color(0xFF757575)
+                )
+            ) {
+                Text(
+                    text = if (isServiceRunning) "🟢 Detection Active" else "⚪ Detection Inactive",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Performance Metrics
+            Text(
+                text = "Performance Metrics",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            MetricCard("FPS", String.format("%.1f", performanceMetrics.fps))
+            MetricCard("Avg Processing Time", "${String.format("%.1f", performanceMetrics.processingTimeMs)} ms")
+            MetricCard("Total Detections", performanceMetrics.totalDetections.toString())
+            MetricCard("Avg Confidence", String.format("%.2f%%", performanceMetrics.avgConfidence * 100))
+            MetricCard("Session Duration", "${performanceMetrics.sessionDurationMs / 1000}s")
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Hazard Statistics
+            Text(
+                text = "Hazard Statistics",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            MetricCard("Pedestrians", hazardStats.pedestrians.toString())
+            MetricCard("Potholes", hazardStats.potholes.toString())
+            MetricCard("Animals/Humps", hazardStats.animals.toString())
+            MetricCard("Road Works", hazardStats.roadWorks.toString())
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Recent Detections
+            Text(
+                text = "Recent Detections (${recentDetections.size})",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (recentDetections.isEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFF3D5A80)
+                    )
+                ) {
+                    Text(
+                        text = "No detections yet...",
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(16.dp)
+                    )
+                }
+            } else {
+                recentDetections.forEach { detection ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFF3D5A80)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = detection.label,
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = String.format("%.1f%%", detection.score * 100),
+                                color = Color(0xFF4CAF50),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun MetricCard(label: String, value: String) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0xFF3D5A80)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = label,
+                color = Color.White,
+                fontSize = 16.sp
+            )
+            Text(
+                text = value,
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
             )
         }
     }

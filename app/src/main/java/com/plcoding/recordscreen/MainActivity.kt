@@ -24,7 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -47,6 +47,7 @@ import com.plcoding.recordscreen.ScreenRecordService.Companion.STOP_RECORDING
 import com.plcoding.recordscreen.ui.theme.CoralRed
 import com.plcoding.recordscreen.ui.theme.RecordScreenTheme
 
+
 class MainActivity : ComponentActivity() {
     private val mediaProjectionManager by lazy {
         getSystemService<MediaProjectionManager>()!!
@@ -65,6 +66,7 @@ class MainActivity : ComponentActivity() {
                     )
                     Screen.HazardMenu -> HazardMenuScreen(
                         onBack = { currentScreen = Screen.Home },
+                        onNavigateToAboutUs = { currentScreen = Screen.AboutUs },
                         onNavigateToDevMode = { currentScreen = Screen.DevMode },
                         mediaProjectionManager = mediaProjectionManager
                     )
@@ -72,7 +74,7 @@ class MainActivity : ComponentActivity() {
                         onBack = { currentScreen = Screen.Home }
                     )
                     Screen.DevMode -> DevModeScreen(
-                        onBack = { currentScreen = Screen.Home }
+                        onBack = { currentScreen = Screen.HazardMenu }
                     )
                 }
             }
@@ -181,6 +183,7 @@ fun FocusNetHomeScreen(
 @Composable
 fun HazardMenuScreen(
     onBack: () -> Unit,
+    onNavigateToAboutUs: () -> Unit,
     onNavigateToDevMode: () -> Unit,
     mediaProjectionManager: MediaProjectionManager
 ) {
@@ -188,6 +191,8 @@ fun HazardMenuScreen(
     val isServiceRunning by ScreenRecordService.isServiceRunning.collectAsStateWithLifecycle()
 
     var isVoiceAlertEnabled by remember { mutableStateOf(true) }
+    var selectedModel by remember { mutableStateOf("FocusNet.tflite") }
+    var isModelMenuExpanded by remember { mutableStateOf(false) }
 
     var hasNotificationPermission by remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -204,7 +209,12 @@ fun HazardMenuScreen(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         val intent = result.data ?: return@rememberLauncherForActivityResult
-        val config = ScreenRecordConfig(resultCode = result.resultCode, data = intent)
+        val config = ScreenRecordConfig(
+            resultCode = result.resultCode,
+            data = intent,
+            modelFileName = selectedModel,
+            isVoiceAlertEnabled = isVoiceAlertEnabled
+        )
         val serviceIntent = Intent(context, ScreenRecordService::class.java).apply {
             action = START_RECORDING
             putExtra(KEY_RECORDING_CONFIG, config)
@@ -246,7 +256,7 @@ fun HazardMenuScreen(
         ) {
             IconButton(onClick = onBack) {
                 Icon(
-                    Icons.Filled.ArrowBack,
+                    Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back",
                     tint = Color.White
                 )
@@ -281,11 +291,64 @@ fun HazardMenuScreen(
 
         Spacer(modifier = Modifier.height(50.dp))
 
+        // Model Selection Dropdown
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 40.dp)
+        ) {
+            Column {
+                Text(
+                    text = "Select Model",
+                    fontSize = 14.sp,
+                    color = Color.White,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF3D5A80), RoundedCornerShape(8.dp))
+                        .clickable { isModelMenuExpanded = true }
+                        .padding(12.dp)
+                ) {
+                    Text(
+                        text = if (selectedModel == "FocusNet.tflite") "FocusNet" else "SSD Baseline",
+                        color = Color.White,
+                        fontSize = 14.sp
+                    )
+                }
+
+                DropdownMenu(
+                    expanded = isModelMenuExpanded,
+                    onDismissRequest = { isModelMenuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("FocusNet") },
+                        onClick = {
+                            selectedModel = "FocusNet.tflite"
+                            isModelMenuExpanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("SSD Baseline") },
+                        onClick = {
+                            selectedModel = "ssd_mobile.ptl"
+                            isModelMenuExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
         // Voice Alert Toggle
         Box(
             modifier = Modifier.fillMaxWidth(),
             contentAlignment = Alignment.CenterStart
         ) {
+
             Row(
                 modifier = Modifier
                     .padding(vertical = 10.dp)
@@ -362,319 +425,27 @@ fun HazardMenuScreen(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // Dev Mode link instead of About Us
-        Text(
-            text = "Dev Mode",
-            fontSize = 14.sp,
-            color = Color.White,
-            textDecoration = TextDecoration.Underline,
-            modifier = Modifier
-                .padding(bottom = 20.dp)
-                .clickable { onNavigateToDevMode() }
-        )
-    }
-}
-
-// ==================== DEV MODE SCREEN ====================
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun DevModeScreen(onBack: () -> Unit) {
-    // Get real-time data from ScreenRecordService
-    val isServiceRunning by ScreenRecordService.isServiceRunning.collectAsStateWithLifecycle()
-    val performanceMetrics by ScreenRecordService.performanceMetrics.collectAsStateWithLifecycle()
-    val hazardStats by ScreenRecordService.hazardStats.collectAsStateWithLifecycle()
-    val recentDetections by ScreenRecordService.recentDetections.collectAsStateWithLifecycle()
-
-    var debugMode by remember { mutableStateOf(false) }
-    var loggingEnabled by remember { mutableStateOf(true) }
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "Dev Mode",
-                            color = Color.White,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        // Live indicator
-                        if (isServiceRunning) {
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .background(Color.Green, androidx.compose.foundation.shape.CircleShape)
-                            )
-                        }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF2D4059)
-                )
-            )
-        },
-        containerColor = Color(0xFF2D4059)
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(16.dp)
-                .verticalScroll(rememberScrollState())
-        ) {
-            // Detection Status
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isServiceRunning) Color(0xFF1B5E20) else Color(0xFF424242)
-                )
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (isServiceRunning) "🟢 Detection Active" else "🔴 Detection Stopped",
-                        color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
-                    if (isServiceRunning) {
-                        Text(
-                            text = "Live Detections: ${recentDetections.size}",
-                            color = Color.White,
-                            fontSize = 14.sp
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Real-time Performance Metrics
-            Text(
-                text = "📊 Real-time Performance",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                modifier = Modifier.height(200.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                item {
-                    MetricCard(
-                        title = "Total Detections",
-                        value = "${performanceMetrics.totalDetections}",
-                        color = Color(0xFF4CAF50)
-                    )
-                }
-                item {
-                    MetricCard(
-                        title = "Avg Confidence",
-                        value = "${(performanceMetrics.avgConfidence * 100).toInt()}%",
-                        color = Color(0xFF2196F3)
-                    )
-                }
-                item {
-                    MetricCard(
-                        title = "Processing Time",
-                        value = "${performanceMetrics.processingTimeMs.toInt()}ms",
-                        color = Color(0xFFFF9800)
-                    )
-                }
-                item {
-                    MetricCard(
-                        title = "Session Duration",
-                        value = "${(performanceMetrics.sessionDurationMs / 1000)}s",
-                        color = Color(0xFF9C27B0)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Real Hazard Detection Analytics
-            Text(
-                text = "📈 Live Hazard Detection",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                modifier = Modifier.height(160.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                item {
-                    HazardStatsCard("Pedestrians", hazardStats.pedestrians, Color(0xFFE91E63))
-                }
-                item {
-                    HazardStatsCard("Potholes/Humps", hazardStats.potholes, Color(0xFF795548))
-                }
-                item {
-                    HazardStatsCard("Animals", hazardStats.animals, Color(0xFF4CAF50))
-                }
-                item {
-                    HazardStatsCard("Road Works", hazardStats.roadWorks, Color(0xFFFF5722))
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Current Detections (if any)
-            if (recentDetections.isNotEmpty()) {
-                Text(
-                    text = "🎯 Current Frame Detections",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF3E5470))
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        recentDetections.forEach { detection ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = detection.label,
-                                    color = Color.White,
-                                    fontSize = 14.sp
-                                )
-                                Text(
-                                    text = "${(detection.score * 100).toInt()}%",
-                                    color = Color(0xFF4CAF50),
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-
-
-            Spacer(modifier = Modifier.height(24.dp))
-        }
-    }
-}
-
-// ==================== HELPER COMPOSABLES FOR DEV MODE ====================
-@Composable
-fun MetricCard(title: String, value: String, color: Color) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.1f)),
-        border = androidx.compose.foundation.BorderStroke(1.dp, color)
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = title,
-                fontSize = 12.sp,
-                color = Color.White,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = value,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = color
-            )
-        }
-    }
-}
-
-@Composable
-fun ComparisonRow(metric: String, ssdValue: Float, focusNetValue: Float) {
-    val improvement = ((focusNetValue - ssdValue) / ssdValue * 100)
-
-    Column(modifier = Modifier.padding(vertical = 4.dp)) {
-        Text(
-            text = metric,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            color = Color.White
-        )
+        // Navigation links
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 20.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             Text(
-                text = "SSD: ${(ssdValue * 100).toInt()}%",
-                fontSize = 12.sp,
-                color = Color(0xFFFF9800)
-            )
-            Text(
-                text = "FocusNet: ${(focusNetValue * 100).toInt()}%",
-                fontSize = 12.sp,
-                color = Color(0xFF4CAF50)
-            )
-            Text(
-                text = "${if (improvement > 0) "+" else ""}${improvement.toInt()}%",
-                fontSize = 12.sp,
-                color = if (improvement > 0) Color(0xFF4CAF50) else Color(0xFFFF5722),
-                fontWeight = FontWeight.Bold
-            )
-        }
-    }
-}
-
-@Composable
-fun HazardStatsCard(title: String, count: Int, color: Color) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.1f)),
-        border = androidx.compose.foundation.BorderStroke(1.dp, color)
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = title,
-                fontSize = 11.sp,
+                text = "About Us",
+                fontSize = 14.sp,
                 color = Color.White,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                textDecoration = TextDecoration.Underline,
+                modifier = Modifier.clickable { onNavigateToAboutUs() }
             )
-            Spacer(modifier = Modifier.height(4.dp))
+
             Text(
-                text = "$count",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = color
+                text = "Dev Mode",
+                fontSize = 14.sp,
+                color = Color.White,
+                textDecoration = TextDecoration.Underline,
+                modifier = Modifier.clickable { onNavigateToDevMode() }
             )
         }
     }
@@ -691,7 +462,7 @@ fun AboutUsScreen(onBack: () -> Unit) {
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            Icons.Filled.ArrowBack,
+                            Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
                             tint = Color.White
                         )
@@ -722,7 +493,7 @@ fun AboutUsScreen(onBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Divider(color = Color.White, thickness = 1.5.dp)
+            HorizontalDivider(color = Color.White, thickness = 1.5.dp)
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -760,6 +531,274 @@ fun AboutUsScreen(onBack: () -> Unit) {
     }
 }
 
+// ==================== DEV MODE SCREEN ====================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DevModeScreen(onBack: () -> Unit) {
+    // --- Data Collection ---
+    val isServiceRunning by ScreenRecordService.isServiceRunning.collectAsStateWithLifecycle()
+    val performanceMetrics by ScreenRecordService.performanceMetrics.collectAsStateWithLifecycle()
+    val hazardStats by ScreenRecordService.hazardStats.collectAsStateWithLifecycle()
+    val recentDetections by ScreenRecordService.recentDetections.collectAsStateWithLifecycle()
+
+    // --- State for UI Controls ---
+    var debugMode by remember { mutableStateOf(false) }
+    var loggingEnabled by remember { mutableStateOf(true) }
+
+    // --- Hardcoded Model Comparison Data (as per SOP) ---
+    val modelComparison = remember {
+        ModelComparison(
+            ssdRecall = 0.39f,
+            ssdPrecision = 0.66f,
+            ssdF1Score = 0.48f,
+            ssdAccuracy = 0.66f,
+            focusNetRecall = 0.66f,
+            focusNetPrecision = 0.84f,
+            focusNetF1Score = 0.73f,
+            focusNetAccuracy = 0.84f
+        )
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = "Dev Mode Dashboard",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color(0xFF2D4059)
+                )
+            )
+        },
+        containerColor = Color(0xFF2D4059)
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            // --- Status Card ---
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isServiceRunning) Color(0xFF1B5E20) else Color(0xFF424242)
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isServiceRunning) "🟢 Detection Active" else "🔴 Detection Stopped",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    if (isServiceRunning) {
+                        Text(
+                            text = "Live Detections: ${recentDetections.size}",
+                            color = Color.White,
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // --- Performance Metrics ---
+            Text(
+                text = "Real-time Performance",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                modifier = Modifier.height(200.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item { PerformanceMetricCard("FPS", String.format("%.1f", performanceMetrics.fps), Color(0xFF4CAF50)) }
+                item { PerformanceMetricCard("Processing Time", "${String.format("%.0f", performanceMetrics.processingTimeMs)} ms", Color(0xFFFFC107)) }
+                item { PerformanceMetricCard("Total Detections", performanceMetrics.totalDetections.toString(), Color(0xFF2196F3)) }
+                item { PerformanceMetricCard("Avg Confidence", String.format("%.1f%%", performanceMetrics.avgConfidence * 100), Color(0xFF9C27B0)) }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // --- Model Comparison Section ---
+            Text(
+                text = "Model Comparison (FocusNet vs. SSD)",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF3E5470))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    ComparisonRow("Recall", modelComparison.ssdRecall, modelComparison.focusNetRecall)
+                    ComparisonRow("Precision", modelComparison.ssdPrecision, modelComparison.focusNetPrecision)
+                    ComparisonRow("F1-Score", modelComparison.ssdF1Score, modelComparison.focusNetF1Score)
+                    ComparisonRow("Overall Accuracy", modelComparison.ssdAccuracy, modelComparison.focusNetAccuracy)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // --- Hazard Statistics ---
+            Text(
+                text = "Hazard Statistics",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                modifier = Modifier.height(160.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item { HazardStatsCard("Pedestrians", hazardStats.pedestrians, Color(0xFFE91E63)) }
+                item { HazardStatsCard("Potholes & Humps", hazardStats.potholes, Color(0xFF795548)) }
+                item { HazardStatsCard("Animals", hazardStats.animals, Color(0xFF009688)) }
+                item { HazardStatsCard("Road Works", hazardStats.roadWorks, Color(0xFFFF5722)) }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+        }
+    }
+}
+
+data class ModelComparison(
+    val ssdRecall: Float,
+    val ssdPrecision: Float,
+    val ssdF1Score: Float,
+    val ssdAccuracy: Float,
+    val focusNetRecall: Float,
+    val focusNetPrecision: Float,
+    val focusNetF1Score: Float,
+    val focusNetAccuracy: Float
+)
+
+@Composable
+fun PerformanceMetricCard(title: String, value: String, color: Color) {
+    Card(
+        modifier = Modifier.fillMaxSize(),
+        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.15f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp).fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = title,
+                fontSize = 14.sp,
+                color = Color.White,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = value,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                color = color
+            )
+        }
+    }
+}
+
+@Composable
+fun HazardStatsCard(title: String, count: Int, color: Color) {
+    Card(
+        modifier = Modifier.fillMaxSize(),
+        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.15f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp).fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = title,
+                fontSize = 14.sp,
+                color = Color.White,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = count.toString(),
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                color = color
+            )
+        }
+    }
+}
+
+@Composable
+fun ComparisonRow(metric: String, ssdValue: Float, focusNetValue: Float) {
+    val improvement = ((focusNetValue - ssdValue) / ssdValue * 100)
+
+    Column(modifier = Modifier.padding(vertical = 6.dp)) {
+        Text(
+            text = metric,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Medium,
+            color = Color.White
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "SSD: ${String.format("%.1f%%", ssdValue * 100)}",
+                fontSize = 14.sp,
+                color = Color(0xFFFF9800)
+            )
+            Text(
+                text = "FocusNet: ${String.format("%.1f%%", focusNetValue * 100)}",
+                fontSize = 14.sp,
+                color = Color(0xFF81C784) // Light Green
+            )
+            Text(
+                text = "${if (improvement > 0) "+" else ""}${improvement.toInt()}%",
+                fontSize = 14.sp,
+                color = if (improvement > 0) Color(0xFF4CAF50) else Color(0xFFF44336),
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
 // ==================== HELPER COMPONENTS ====================
 data class HazardItem(val imageRes: Int, val label: String)
 
@@ -782,32 +821,3 @@ fun HazardButton(item: HazardItem) {
         Text(text = item.label, color = Color.White, fontSize = 14.sp)
     }
 }
-
-// ==================== DATA CLASSES FOR DEV MODE ====================
-data class PerformanceMetrics(
-    val totalDetections: Int = 0,
-    val avgConfidence: Float = 0f,
-    val processingTimeMs: Float = 0f,
-    val fps: Float = 0f,
-    val sessionDurationMs: Long = 0L
-)
-
-data class ModelComparison(
-    val ssdRecall: Float,
-    val ssdPrecision: Float,
-    val ssdF1Score: Float,
-    val ssdMAP: Float,
-    val focusNetRecall: Float,
-    val focusNetPrecision: Float,
-    val focusNetF1Score: Float,
-    val focusNetMAP: Float
-)
-
-data class HazardDetectionStats(
-    val pedestrians: Int = 0,
-    val potholes: Int = 0,
-    val animals: Int = 0,
-    val roadWorks: Int = 0
-)
-
-

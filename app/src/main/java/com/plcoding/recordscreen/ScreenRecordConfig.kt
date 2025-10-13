@@ -13,7 +13,7 @@ import android.os.Parcelable
 data class ScreenRecordConfig(
     val resultCode: Int,
     val data: Intent,
-    val modelFileName: String = "best_integer_quant.tflite",
+    val modelFileName: String = "focusnet_mobile.ptl",
     val isVoiceAlertEnabled: Boolean = true
 ) : Parcelable {
 
@@ -25,7 +25,7 @@ data class ScreenRecordConfig(
             @Suppress("DEPRECATION")
             parcel.readParcelable(Intent::class.java.classLoader)!!
         },
-        parcel.readString() ?: "best_integer_quant.tflite",
+        parcel.readString() ?: "focusnet_mobile.ptl",
         parcel.readByte() != 0.toByte()
     )
 

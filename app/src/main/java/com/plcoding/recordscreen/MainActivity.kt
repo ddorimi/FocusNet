@@ -41,149 +41,138 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.plcoding.recordscreen.ScreenRecordService.Companion.KEY_RECORDING_CONFIG
-import com.plcoding.recordscreen.ScreenRecordService.Companion.START_RECORDING
-import com.plcoding.recordscreen.ScreenRecordService.Companion.STOP_RECORDING
 import com.plcoding.recordscreen.ui.theme.CoralRed
 import com.plcoding.recordscreen.ui.theme.RecordScreenTheme
-
 
 class MainActivity : ComponentActivity() {
     private val mediaProjectionManager by lazy {
         getSystemService<MediaProjectionManager>()!!
     }
 
+    // ✅ Android 14+ compatible media permission launcher
+    private val mediaPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val granted = permissions.entries.all { it.value }
+        if (granted) {
+            Toast.makeText(this, "Media permissions granted", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "Media permission denied or limited", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun requestMediaPermissions() {
+        when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> { // Android 14+
+                mediaPermissionLauncher.launch(
+                    arrayOf(
+                        Manifest.permission.READ_MEDIA_IMAGES,
+                        Manifest.permission.READ_MEDIA_VIDEO
+                    )
+                )
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> { // Android 13
+                mediaPermissionLauncher.launch(
+                    arrayOf(
+                        Manifest.permission.READ_MEDIA_IMAGES,
+                        Manifest.permission.READ_MEDIA_VIDEO
+                    )
+                )
+            }
+            else -> {
+                mediaPermissionLauncher.launch(
+                    arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+                )
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestMediaPermissions() // ✅ Request proper media access on launch
+
         setContent {
             RecordScreenTheme {
                 var currentScreen by remember { mutableStateOf(Screen.Home) }
 
                 when (currentScreen) {
-                    Screen.Home -> FocusNetHomeScreen(
-                        onNavigateToHazardMenu = { currentScreen = Screen.HazardMenu },
-                        onNavigateToAboutUs = { currentScreen = Screen.AboutUs }
+                    Screen.Home -> HomeScreen(
+                        onNavigateToDetection = { currentScreen = Screen.Detection },
+                        onNavigateToAbout = { currentScreen = Screen.About }
                     )
-                    Screen.HazardMenu -> HazardMenuScreen(
+                    Screen.Detection -> DetectionScreen(
                         onBack = { currentScreen = Screen.Home },
-                        onNavigateToAboutUs = { currentScreen = Screen.AboutUs },
+                        onNavigateToAbout = { currentScreen = Screen.About },
                         onNavigateToDevMode = { currentScreen = Screen.DevMode },
                         mediaProjectionManager = mediaProjectionManager
                     )
-                    Screen.AboutUs -> AboutUsScreen(
-                        onBack = { currentScreen = Screen.Home }
-                    )
-                    Screen.DevMode -> DevModeScreen(
-                        onBack = { currentScreen = Screen.HazardMenu }
-                    )
+                    Screen.About -> AboutScreen(onBack = { currentScreen = Screen.Home })
+                    Screen.DevMode -> DevModeScreen(onBack = { currentScreen = Screen.Detection })
                 }
             }
         }
     }
-
-    private fun ensureOverlayPermissionThenStart(projectionIntentLauncher: () -> Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
-                data = Uri.parse("package:$packageName")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            startActivity(intent)
-            Toast.makeText(
-                this,
-                "Please grant 'Display over other apps' permission, then start recording again.",
-                Toast.LENGTH_LONG
-            ).show()
-        } else {
-            projectionIntentLauncher()
-        }
-    }
 }
 
-// Screen navigation enum
-enum class Screen {
-    Home, HazardMenu, AboutUs, DevMode
-}
+enum class Screen { Home, Detection, About, DevMode }
 
-// ==================== HOME SCREEN ====================
 @Composable
-fun FocusNetHomeScreen(
-    onNavigateToHazardMenu: () -> Unit,
-    onNavigateToAboutUs: () -> Unit
-) {
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        containerColor = Color(0xFF2D4059)
-    ) { innerPadding ->
-        Box(
+fun HomeScreen(onNavigateToDetection: () -> Unit, onNavigateToAbout: () -> Unit) {
+    Scaffold(containerColor = Color(0xFF2D4059)) { innerPadding ->
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Column(
+            Spacer(modifier = Modifier.height(300.dp))
+
+            Image(
+                painter = painterResource(id = R.drawable.fnlogo),
+                contentDescription = "FocusNet Logo",
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .fillMaxWidth(0.8f)
+                    .aspectRatio(2.5f),
+                contentScale = ContentScale.Fit
+            )
+
+            Spacer(modifier = Modifier.height(30.dp))
+
+            Button(
+                onClick = onNavigateToDetection,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White,
+                    contentColor = Color(0xFFFF9800)
+                ),
+                shape = RoundedCornerShape(30.dp),
+                modifier = Modifier
+                    .height(55.dp)
+                    .width(230.dp)
+                    .shadow(6.dp, RoundedCornerShape(30.dp), clip = false)
             ) {
-                Spacer(modifier = Modifier.height(300.dp))
-
-                // Logo
-                Image(
-                    painter = painterResource(id = R.drawable.fnlogo),
-                    contentDescription = "FocusNet Logo",
-                    modifier = Modifier
-                        .fillMaxWidth(0.8f)
-                        .aspectRatio(2.5f),
-                    contentScale = ContentScale.Fit
-                )
-
-                Spacer(modifier = Modifier.height(30.dp))
-
-                // Start Detection Button
-                Button(
-                    onClick = onNavigateToHazardMenu,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White,
-                        contentColor = Color(0xFFFF9800)
-                    ),
-                    shape = RoundedCornerShape(30.dp),
-                    modifier = Modifier
-                        .height(55.dp)
-                        .width(230.dp)
-                        .shadow(
-                            elevation = 6.dp,
-                            shape = RoundedCornerShape(30.dp),
-                            clip = false
-                        )
-                ) {
-                    Text(
-                        text = "Start Detection",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-
-                Spacer(modifier = Modifier.weight(1f))
-
-                Text(
-                    text = "About Us",
-                    fontSize = 14.sp,
-                    color = Color.White,
-                    textDecoration = TextDecoration.Underline,
-                    modifier = Modifier
-                        .padding(bottom = 20.dp)
-                        .clickable { onNavigateToAboutUs() }
-                )
+                Text("Start Detection", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            Text(
+                text = "About Us",
+                fontSize = 14.sp,
+                color = Color.White,
+                textDecoration = TextDecoration.Underline,
+                modifier = Modifier
+                    .padding(bottom = 20.dp)
+                    .clickable { onNavigateToAbout() }
+            )
         }
     }
 }
 
-// ==================== HAZARD MENU SCREEN ====================
 @Composable
-fun HazardMenuScreen(
+fun DetectionScreen(
     onBack: () -> Unit,
-    onNavigateToAboutUs: () -> Unit,
+    onNavigateToAbout: () -> Unit,
     onNavigateToDevMode: () -> Unit,
     mediaProjectionManager: MediaProjectionManager
 ) {
@@ -191,22 +180,20 @@ fun HazardMenuScreen(
     val isServiceRunning by ScreenRecordService.isServiceRunning.collectAsStateWithLifecycle()
 
     var isVoiceAlertEnabled by remember { mutableStateOf(true) }
-    var selectedModel by remember { mutableStateOf("best_integer_quant.tflite") }
+    var selectedModel by remember { mutableStateOf("focusnet_mobile.ptl") }
     var isModelMenuExpanded by remember { mutableStateOf(false) }
 
     var hasNotificationPermission by remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             mutableStateOf(
-                ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) == PackageManager.PERMISSION_GRANTED
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+                        == PackageManager.PERMISSION_GRANTED
             )
         } else mutableStateOf(true)
     }
 
     val screenRecordLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
+        ActivityResultContracts.StartActivityForResult()
     ) { result ->
         val intent = result.data ?: return@rememberLauncherForActivityResult
         val config = ScreenRecordConfig(
@@ -216,26 +203,18 @@ fun HazardMenuScreen(
             isVoiceAlertEnabled = isVoiceAlertEnabled
         )
         val serviceIntent = Intent(context, ScreenRecordService::class.java).apply {
-            action = START_RECORDING
-            putExtra(KEY_RECORDING_CONFIG, config)
+            action = ScreenRecordService.START_RECORDING
+            putExtra(ScreenRecordService.KEY_RECORDING_CONFIG, config)
         }
         ContextCompat.startForegroundService(context, serviceIntent)
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
+        ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         hasNotificationPermission = isGranted
         if (hasNotificationPermission && !isServiceRunning) {
-            if (!Settings.canDrawOverlays(context)) {
-                val intent = Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:${context.packageName}")
-                ).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                context.startActivity(intent)
-            } else {
+            if (Settings.canDrawOverlays(context)) {
                 screenRecordLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
             }
         }
@@ -249,23 +228,15 @@ fun HazardMenuScreen(
             .systemBarsPadding(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Back + Title
+        // Header
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth()
         ) {
             IconButton(onClick = onBack) {
-                Icon(
-                    Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = Color.White
-                )
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White)
             }
-            Text(
-                text = "Types of Hazard",
-                fontSize = 18.sp,
-                color = Color.White
-            )
+            Text("Road Hazards", fontSize = 18.sp, color = Color.White)
         }
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -273,175 +244,136 @@ fun HazardMenuScreen(
         // Hazard Grid
         val hazards = listOf(
             HazardItem(R.drawable.pedestrian_logo, "Pedestrians"),
-            HazardItem(R.drawable.potholeshumps_logo, "Potholes / Humps"),
+            HazardItem(R.drawable.potholeshumps_logo, "Potholes"),
+            HazardItem(R.drawable.potholeshumps_logo, "Humps"),
             HazardItem(R.drawable.animals_logo, "Animals"),
             HazardItem(R.drawable.roadworks_logo, "Road Works")
         )
 
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(300.dp),
+            modifier = Modifier.fillMaxWidth().height(380.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
+            verticalArrangement = Arrangement.spacedBy(15.dp)
         ) {
-            items(hazards) { item -> HazardButton(item) }
+            items(hazards) { HazardButton(it) }
         }
 
-        Spacer(modifier = Modifier.height(50.dp))
+        Spacer(modifier = Modifier.height(30.dp))
 
-        // Model Selection Dropdown
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 40.dp)
-        ) {
-            Column {
+        // Model Selection
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp)) {
+            Text("Select Model", fontSize = 14.sp, color = Color.White)
+            Spacer(modifier = Modifier.height(4.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF3D5A80), RoundedCornerShape(8.dp))
+                    .clickable { isModelMenuExpanded = true }
+                    .padding(12.dp)
+            ) {
                 Text(
-                    text = "Select Model",
-                    fontSize = 14.sp,
+                    when (selectedModel) {
+                        "focusnet_mobile.ptl" -> "FocusNet"
+                        "baseline_mobile.ptl" -> "Baseline SSD"
+                        else -> "Unknown"
+                    },
                     color = Color.White,
-                    modifier = Modifier.padding(bottom = 4.dp)
+                    fontSize = 14.sp
                 )
-                
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFF3D5A80), RoundedCornerShape(8.dp))
-                        .clickable { isModelMenuExpanded = true }
-                        .padding(12.dp)
-                ) {
-                    Text(
-                        text = if (selectedModel == "best_integer_quant.tflite") "Model 1 (Default)" else "Model 2 (Alternative)",
-                        color = Color.White,
-                        fontSize = 14.sp
-                    )
-                }
-                
-                DropdownMenu(
-                    expanded = isModelMenuExpanded,
-                    onDismissRequest = { isModelMenuExpanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Model 1 (Default)") },
-                        onClick = {
-                            selectedModel = "best_integer_quant.tflite"
-                            isModelMenuExpanded = false
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Model 2 (Alternative)") },
-                        onClick = {
-                            selectedModel = "model2.tflite"
-                            isModelMenuExpanded = false
-                        }
-                    )
-                }
+            }
+            DropdownMenu(
+                expanded = isModelMenuExpanded,
+                onDismissRequest = { isModelMenuExpanded = false }
+            ) {
+                DropdownMenuItem(
+                    text = { Text("FocusNet (Recommended)") },
+                    onClick = {
+                        selectedModel = "focusnet_mobile.ptl"
+                        isModelMenuExpanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Baseline SSD") },
+                    onClick = {
+                        selectedModel = "baseline_mobile.ptl"
+                        isModelMenuExpanded = false
+                    }
+                )
             }
         }
 
         Spacer(modifier = Modifier.height(20.dp))
 
         // Voice Alert Toggle
-        Box(
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.CenterStart
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-
-            Row(
-                modifier = Modifier
-                    .padding(vertical = 10.dp)
-                    .padding(start = 40.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Switch(
-                    checked = isVoiceAlertEnabled,
-                    onCheckedChange = { isVoiceAlertEnabled = it },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = Color(0xFF4CAF50),
-                        uncheckedThumbColor = Color.White,
-                        uncheckedTrackColor = Color(0xFF757575)
-                    )
+            Switch(
+                checked = isVoiceAlertEnabled,
+                onCheckedChange = { isVoiceAlertEnabled = it },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = Color(0xFF4CAF50)
                 )
-
-                Text(
-                    text = "Voice Alert",
-                    fontSize = 16.sp,
-                    color = Color.White,
-                    fontWeight = FontWeight.Medium
-                )
-            }
+            )
+            Text("Voice Alert", fontSize = 16.sp, color = Color.White)
         }
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Detect Now Button
+        // Detect Button
         Button(
             onClick = {
                 if (!hasNotificationPermission && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                } else if (isServiceRunning) {
+                    Intent(context, ScreenRecordService::class.java).also {
+                        it.action = ScreenRecordService.STOP_RECORDING
+                        ContextCompat.startForegroundService(context, it)
+                    }
                 } else {
-                    if (isServiceRunning) {
-                        Intent(context, ScreenRecordService::class.java).also {
-                            it.action = STOP_RECORDING
-                            ContextCompat.startForegroundService(context, it)
-                        }
+                    if (Settings.canDrawOverlays(context)) {
+                        screenRecordLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
                     } else {
-                        if (!Settings.canDrawOverlays(context)) {
-                            val intent = Intent(
-                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                Uri.parse("package:${context.packageName}")
-                            ).apply {
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            context.startActivity(intent)
-                        } else {
-                            screenRecordLauncher.launch(
-                                mediaProjectionManager.createScreenCaptureIntent()
-                            )
-                        }
+                        val intent = Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:${context.packageName}")
+                        )
+                        context.startActivity(intent)
                     }
                 }
             },
             colors = ButtonDefaults.buttonColors(
-                containerColor = if (isServiceRunning) CoralRed else Color(0xFFFD7014),
-                contentColor = Color.White
+                containerColor = if (isServiceRunning) CoralRed else Color(0xFFFD7014)
             ),
-            elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp),
             shape = RoundedCornerShape(50.dp),
             modifier = Modifier
                 .padding(horizontal = 40.dp)
                 .height(55.dp)
                 .fillMaxWidth(0.7f)
         ) {
-            Text(
-                text = if (isServiceRunning) "Stop Detecting" else "Detect Now",
-                fontSize = 16.sp
-            )
+            Text(if (isServiceRunning) "Stop" else "Detect Now", fontSize = 16.sp)
         }
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // Navigation links
+        // Footer Links
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 20.dp),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             Text(
-                text = "About Us",
+                "About Us",
                 fontSize = 14.sp,
                 color = Color.White,
                 textDecoration = TextDecoration.Underline,
-                modifier = Modifier.clickable { onNavigateToAboutUs() }
+                modifier = Modifier.clickable { onNavigateToAbout() }
             )
-            
             Text(
-                text = "Dev Mode",
+                "Dev Mode",
                 fontSize = 14.sp,
                 color = Color.White,
                 textDecoration = TextDecoration.Underline,
@@ -451,138 +383,83 @@ fun HazardMenuScreen(
     }
 }
 
-// ==================== ABOUT US SCREEN ====================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AboutUsScreen(onBack: () -> Unit) {
+fun AboutScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {},
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White
-                        )
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF687D99)
-                )
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF687D99))
             )
         },
         containerColor = Color(0xFF687D99)
-    ) { innerPadding ->
+    ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 20.dp)
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.Start
+                .padding(padding)
+                .padding(20.dp)
+                .verticalScroll(rememberScrollState())
         ) {
-            Text(
-                text = "About Us",
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                modifier = Modifier.padding(top = 16.dp)
-            )
-
+            Text("About FocusNet", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = Color.White)
             Spacer(modifier = Modifier.height(8.dp))
-
             HorizontalDivider(color = Color.White, thickness = 1.5.dp)
-
             Spacer(modifier = Modifier.height(16.dp))
-
             Text(
-                text = "FOCUSNet",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "FOCUSNet is a research project focused on improving road safety by enhancing object detection in low-light environments. The goal is to accurately detect road hazards at night using deep learning techniques.",
+                "FocusNet improves road safety by detecting hazards in low-light conditions using deep learning. " +
+                        "It combines SSD, MobileNetV3, and CBAM for efficient real-time detection.",
                 fontSize = 16.sp,
-                color = Color.White
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "This study presents a modified Single Shot MultiBox Detector (SSD) that combines MobileNetV3 and the Convolutional Block Attention Module (CBAM) to improve detection performance in low-light conditions. The performance of this model is compared with a baseline SSD using standard evaluation metrics.",
-                fontSize = 16.sp,
-                color = Color.White
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "FOCUSNet aims to support safer nighttime driving through intelligent and efficient object detection systems.",
-                fontSize = 16.sp,
-                color = Color.White
+                color = Color.White,
+                lineHeight = 24.sp
             )
         }
     }
 }
 
-// ==================== DEV MODE SCREEN ====================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DevModeScreen(onBack: () -> Unit) {
-    val performanceMetrics by ScreenRecordService.performanceMetrics.collectAsStateWithLifecycle()
+    val metrics by ScreenRecordService.performanceMetrics.collectAsStateWithLifecycle()
     val hazardStats by ScreenRecordService.hazardStats.collectAsStateWithLifecycle()
-    val recentDetections by ScreenRecordService.recentDetections.collectAsStateWithLifecycle()
-    val isServiceRunning by ScreenRecordService.isServiceRunning.collectAsStateWithLifecycle()
+    val detections by ScreenRecordService.recentDetections.collectAsStateWithLifecycle()
+    val isRunning by ScreenRecordService.isServiceRunning.collectAsStateWithLifecycle()
+    val threshold by ScreenRecordService.confidenceThreshold.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Text(
-                        text = "Dev Mode",
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                },
+                title = { Text("Dev Mode", color = Color.White, fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White
-                        )
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF2D4059)
-                )
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF2D4059))
             )
         },
         containerColor = Color(0xFF2D4059)
-    ) { innerPadding ->
+    ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .padding(padding)
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-            // Status Card
+            // Status
             Card(
-                modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
-                    containerColor = if (isServiceRunning) Color(0xFF4CAF50) else Color(0xFF757575)
+                    containerColor = if (isRunning) Color(0xFF4CAF50) else Color(0xFF757575)
                 )
             ) {
                 Text(
-                    text = if (isServiceRunning) "🟢 Detection Active" else "⚪ Detection Inactive",
+                    if (isRunning) "🟢 Active" else "⚪ Inactive",
                     color = Color.White,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
@@ -592,91 +469,72 @@ fun DevModeScreen(onBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Performance Metrics
-            Text(
-                text = "Performance Metrics",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            MetricCard("FPS", String.format("%.1f", performanceMetrics.fps))
-            MetricCard("Avg Processing Time", "${String.format("%.1f", performanceMetrics.processingTimeMs)} ms")
-            MetricCard("Total Detections", performanceMetrics.totalDetections.toString())
-            MetricCard("Avg Confidence", String.format("%.2f%%", performanceMetrics.avgConfidence * 100))
-            MetricCard("Session Duration", "${performanceMetrics.sessionDurationMs / 1000}s")
+            // Confidence Slider
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF3D5A80))) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Confidence", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("${(threshold * 100).toInt()}%", color = Color(0xFF4CAF50), fontWeight = FontWeight.Bold)
+                    }
+                    Slider(
+                        value = threshold,
+                        onValueChange = { ScreenRecordService.setConfidenceThreshold(it) },
+                        valueRange = 0.3f..0.95f,
+                        steps = 12
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Hazard Statistics
-            Text(
-                text = "Hazard Statistics",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-
+            // Metrics
+            Text("Performance", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
             Spacer(modifier = Modifier.height(8.dp))
+            MetricCard("FPS", String.format("%.1f", metrics.fps))
+            MetricCard("Processing", "${String.format("%.0f", metrics.processingTimeMs)} ms")
+            MetricCard("Total Detections", metrics.totalDetections.toString())
 
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Hazard Stats
+            Text("Hazard Counts", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Spacer(modifier = Modifier.height(8.dp))
             MetricCard("Pedestrians", hazardStats.pedestrians.toString())
             MetricCard("Potholes", hazardStats.potholes.toString())
-            MetricCard("Animals/Humps", hazardStats.animals.toString())
+            MetricCard("Humps", hazardStats.humps.toString())
+            MetricCard("Animals", hazardStats.animals.toString())
             MetricCard("Road Works", hazardStats.roadWorks.toString())
 
             Spacer(modifier = Modifier.height(16.dp))
 
             // Recent Detections
-            Text(
-                text = "Recent Detections (${recentDetections.size})",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-
+            Text("Recent (${detections.size})", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
             Spacer(modifier = Modifier.height(8.dp))
-
-            if (recentDetections.isEmpty()) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0xFF3D5A80)
-                    )
-                ) {
+            if (detections.isEmpty()) {
+                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF3D5A80))) {
                     Text(
-                        text = "No detections yet...",
+                        "No detections yet",
                         color = Color.White.copy(alpha = 0.6f),
-                        fontSize = 14.sp,
                         modifier = Modifier.padding(16.dp)
                     )
                 }
             } else {
-                recentDetections.forEach { detection ->
+                detections.forEach { det ->
                     Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = Color(0xFF3D5A80)
-                        )
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF3D5A80))
                     ) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
+                            Modifier.fillMaxWidth().padding(12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
+                            Text(det.label, color = Color.White)
                             Text(
-                                text = detection.label,
-                                color = Color.White,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                text = String.format("%.1f%%", detection.score * 100),
+                                String.format("%.0f%%", det.score * 100),
                                 color = Color(0xFF4CAF50),
-                                fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -690,35 +548,19 @@ fun DevModeScreen(onBack: () -> Unit) {
 @Composable
 fun MetricCard(label: String, value: String) {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF3D5A80)
-        )
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF3D5A80))
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            Modifier.fillMaxWidth().padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(
-                text = label,
-                color = Color.White,
-                fontSize = 16.sp
-            )
-            Text(
-                text = value,
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold
-            )
+            Text(label, color = Color.White)
+            Text(value, color = Color.White, fontWeight = FontWeight.Bold)
         }
     }
 }
 
-// ==================== HELPER COMPONENTS ====================
 data class HazardItem(val imageRes: Int, val label: String)
 
 @Composable
@@ -727,16 +569,12 @@ fun HazardButton(item: HazardItem) {
         Box(
             modifier = Modifier
                 .size(100.dp)
-                .background(Color(0xFFD9D9D9), shape = androidx.compose.foundation.shape.CircleShape),
+                .background(Color(0xFFD9D9D9), androidx.compose.foundation.shape.CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Image(
-                painter = painterResource(id = item.imageRes),
-                contentDescription = item.label,
-                modifier = Modifier.size(60.dp)
-            )
+            Image(painterResource(item.imageRes), item.label, modifier = Modifier.size(60.dp))
         }
         Spacer(modifier = Modifier.height(10.dp))
-        Text(text = item.label, color = Color.White, fontSize = 14.sp)
+        Text(item.label, color = Color.White, fontSize = 14.sp)
     }
 }

@@ -5,11 +5,6 @@ import android.os.Build
 import android.os.Parcel
 import android.os.Parcelable
 
-/**
- * Simple Parcelable holder for MediaProjection config.
- * It passes the permission result code and data Intent
- * from MainActivity to ScreenRecordService.
- */
 data class ScreenRecordConfig(
     val resultCode: Int,
     val data: Intent,

@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -49,7 +50,6 @@ class MainActivity : ComponentActivity() {
         getSystemService<MediaProjectionManager>()!!
     }
 
-    // ✅ Android 14+ compatible media permission launcher
     private val mediaPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
 
     private fun requestMediaPermissions() {
         when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> { // Android 14+
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
                 mediaPermissionLauncher.launch(
                     arrayOf(
                         Manifest.permission.READ_MEDIA_IMAGES,
@@ -71,7 +71,7 @@ class MainActivity : ComponentActivity() {
                     )
                 )
             }
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> { // Android 13
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
                 mediaPermissionLauncher.launch(
                     arrayOf(
                         Manifest.permission.READ_MEDIA_IMAGES,
@@ -89,7 +89,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        requestMediaPermissions() // ✅ Request proper media access on launch
+        requestMediaPermissions()
 
         setContent {
             RecordScreenTheme {
@@ -252,17 +252,24 @@ fun DetectionScreen(
 
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
-            modifier = Modifier.fillMaxWidth().height(380.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(380.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(15.dp)
         ) {
-            items(hazards) { HazardButton(it) }
+            items(hazards) { hazard ->
+                HazardButton(hazard)
+            }
         }
 
         Spacer(modifier = Modifier.height(30.dp))
 
         // Model Selection
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp)) {
+        Column(modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 40.dp)
+        ) {
             Text("Select Model", fontSize = 14.sp, color = Color.White)
             Spacer(modifier = Modifier.height(4.dp))
             Box(
@@ -307,7 +314,9 @@ fun DetectionScreen(
 
         // Voice Alert Toggle
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 40.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -362,7 +371,9 @@ fun DetectionScreen(
 
         // Footer Links
         Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 20.dp),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             Text(
@@ -524,11 +535,15 @@ fun DevModeScreen(onBack: () -> Unit) {
             } else {
                 detections.forEach { det ->
                     Card(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
                         colors = CardDefaults.cardColors(containerColor = Color(0xFF3D5A80))
                     ) {
                         Row(
-                            Modifier.fillMaxWidth().padding(12.dp),
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(det.label, color = Color.White)
@@ -548,11 +563,15 @@ fun DevModeScreen(onBack: () -> Unit) {
 @Composable
 fun MetricCard(label: String, value: String) {
     Card(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF3D5A80))
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(16.dp),
+            Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(label, color = Color.White)
@@ -569,10 +588,14 @@ fun HazardButton(item: HazardItem) {
         Box(
             modifier = Modifier
                 .size(100.dp)
-                .background(Color(0xFFD9D9D9), androidx.compose.foundation.shape.CircleShape),
+                .background(Color(0xFFD9D9D9), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Image(painterResource(item.imageRes), item.label, modifier = Modifier.size(60.dp))
+            Image(
+                painterResource(item.imageRes),
+                item.label,
+                modifier = Modifier.size(60.dp)
+            )
         }
         Spacer(modifier = Modifier.height(10.dp))
         Text(item.label, color = Color.White, fontSize = 14.sp)

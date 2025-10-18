@@ -677,12 +677,13 @@ fun DevModeScreen(onBack: () -> Unit) {
             )
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
-                modifier = Modifier.height(160.dp),
+                modifier = Modifier.height(240.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 item { HazardStatsCard("Pedestrians", hazardStats.pedestrians, Color(0xFFE91E63)) }
-                item { HazardStatsCard("Potholes & Humps", hazardStats.potholes, Color(0xFF795548)) }
+                item { HazardStatsCard("Potholes", hazardStats.potholes, Color(0xFF795548)) }
+                item {HazardStatsCard("Humps", hazardStats.humps, Color(0xFFFF9800))}
                 item { HazardStatsCard("Animals", hazardStats.animals, Color(0xFF009688)) }
                 item { HazardStatsCard("Road Works", hazardStats.roadWorks, Color(0xFFFF5722)) }
             }

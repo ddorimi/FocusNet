@@ -268,6 +268,7 @@ class ScreenRecordService : Service() {
         val currentStats = _hazardStats.value
         var pedestrians = currentStats.pedestrians
         var potholes = currentStats.potholes
+        var humps = currentStats.humps
         var animals = currentStats.animals
         var roadWorks = currentStats.roadWorks
 
@@ -275,6 +276,7 @@ class ScreenRecordService : Service() {
             when (detection.label) {
                 "pedestrian" -> pedestrians++
                 "pothole" -> potholes++
+                "humps" -> humps++  // Count humps with potholes (or add separate counter)
                 "animals" -> animals++
                 "roadworks" -> roadWorks++
             }
@@ -283,6 +285,7 @@ class ScreenRecordService : Service() {
         _hazardStats.value = HazardDetectionStats(
             pedestrians = pedestrians,
             potholes = potholes,
+            humps = humps,
             animals = animals,
             roadWorks = roadWorks
         )
@@ -338,14 +341,13 @@ class ScreenRecordService : Service() {
     }
 
     private fun runModel(input: Array<Any>): Array<Array<FloatArray>> {
-        // output shape: [1, 9, 2100]
-        val output = Array(1) { Array(9) { FloatArray(2100) } }
+        // ✅ Correct output shape: [1, 9, 8400]
+        val output = Array(1) { Array(9) { FloatArray(8400) } }  // Changed from 2100 to 8400
         try {
-            // Use the first element of input if you created it as arrayOf(inputTensor)
             tflite?.run(input[0], output)
-            Log.d("ScreenRecordService", "Output[0][0][0..5]: ${output[0][0].take(6)}")
+            Log.d("ScreenRecordService", "✅ Model inference successful. Output shape: [1, 9, 8400]")
         } catch (e: Exception) {
-            Log.w("ScreenRecordService", "Inference failed: ${e.message}")
+            Log.e("ScreenRecordService", "❌ Inference failed: ${e.message}")
         }
         return output
     }
@@ -354,72 +356,69 @@ class ScreenRecordService : Service() {
         output: Array<Array<FloatArray>>,
         imageW: Int,
         imageH: Int,
-        confThreshold: Float = 0.3f,    // tune this
-        iouThreshold: Float = 0.45f     // NMS IoU threshold
+        confThreshold: Float = 0.25f,    // Start with your training threshold
+        iouThreshold: Float = 0.45f      // NMS IoU threshold
     ): List<Detection> {
 
-        val preds = output[0] // shape [9][2100]
-        val numBoxes = preds[0].size // expect 2100
-        val rawDetections = ArrayList<Detection>(64)
+        val preds = output[0] // shape [9][8400]
+        val numBoxes = 8400
+        val rawDetections = ArrayList<Detection>(256)
+
+        // [cx, cy, w, h, class0, class1, class2, class3, class4]
+        // Your model has 5 classes: animals, humps, pedestrian, pothole, roadworks
+        val classCount = 5
 
         for (i in 0 until numBoxes) {
-            // read values for anchor i
-            val xc = preds[0][i]   // center x (normalized)
-            val yc = preds[1][i]   // center y (normalized)
-            val bw = preds[2][i]   // width (normalized)
-            val bh = preds[3][i]   // height (normalized)
+            // Read box coordinates (already in normalized format [0,1])
+            val xc = preds[0][i]   // center x (normalized 0-1)
+            val yc = preds[1][i]   // center y (normalized 0-1)
+            val bw = preds[2][i]   // width (normalized 0-1)
+            val bh = preds[3][i]   // height (normalized 0-1)
 
-            // objectness and class scores may need sigmoid
-            val objLogit = preds[4][i]
-            val obj = sigmoid(objLogit)
-
-            if (obj < 0.03f) continue // very small objectness -> skip early (adjust)
-
-            // read class logits & apply sigmoid (or softmax later)
-            val classCount = 4
-            val classProbs = FloatArray(classCount)
-            for (c in 0 until classCount) {
-                classProbs[c] = sigmoid(preds[5 + c][i])
-            }
-            // find best class
+            // classes start at index 4
+            // Read class scores (indices 4-8 for 5 classes)
             var bestClass = 0
-            var bestClassProb = classProbs[0]
+            var bestScore = preds[4][i]  // First class score
+
             for (c in 1 until classCount) {
-                if (classProbs[c] > bestClassProb) {
-                    bestClassProb = classProbs[c]
+                val score = preds[4 + c][i]
+                if (score > bestScore) {
+                    bestScore = score
                     bestClass = c
                 }
             }
 
-            // combined confidence (objectness * class probability)
-            val combinedConf = obj * bestClassProb
-            if (combinedConf < confThreshold) continue
+            // Filter by confidence threshold
+            if (bestScore < confThreshold) continue
 
-            // compute box in image coords
+            // Convert normalized coords to pixel coordinates
             val left = (xc - bw / 2f) * imageW
             val top = (yc - bh / 2f) * imageH
             val right = (xc + bw / 2f) * imageW
             val bottom = (yc + bh / 2f) * imageH
 
-            // clamp
+            // Clamp to image bounds
             val l = left.coerceIn(0f, imageW.toFloat())
             val t = top.coerceIn(0f, imageH.toFloat())
             val r = right.coerceIn(0f, imageW.toFloat())
             val b = bottom.coerceIn(0f, imageH.toFloat())
 
-            // label name mapping (replace with your real labels)
-            val labelNames = arrayOf("animals", "pedestrian", "pothole", "roadworks")
-            val label = labelNames.getOrNull(bestClass) ?: "cls$bestClass"
+            // ✅ Skip tiny boxes (noise)
+            if ((r - l) < 10f || (b - t) < 10f) continue
 
-            rawDetections.add(Detection(RectF(l, t, r, b), label, combinedConf))
+            // ✅ Your actual class labels from training
+            val labelNames = arrayOf("animals", "humps", "pedestrian", "pothole", "roadworks")
+            val label = labelNames.getOrNull(bestClass) ?: "unknown"
+
+            rawDetections.add(Detection(RectF(l, t, r, b), label, bestScore))
         }
 
-        Log.d("ScreenRecordService", "Raw detections before NMS: ${rawDetections.size}")
+        Log.d("ScreenRecordService", "📊 Raw detections before NMS: ${rawDetections.size}")
 
-        // apply NMS
+        // Apply NMS
         val final = nonMaxSuppression(rawDetections, iouThreshold)
 
-        Log.d("ScreenRecordService", "Detections after NMS: ${final.size}")
+        Log.d("ScreenRecordService", "✅ Final detections after NMS: ${final.size}")
         return final
     }
 
@@ -531,11 +530,9 @@ class ScreenRecordService : Service() {
         if (!isVoiceAlertEnabled || !isTtsReady || detections.isEmpty()) return
 
         val currentTime = System.currentTimeMillis()
-
         if (currentTime - lastAnnounceTime < announceDebounceMs) return
 
         val currentHazards = detections.map { it.label }.toSet()
-
         if (currentHazards == lastAnnouncedHazards) return
 
         lastAnnouncedHazards = currentHazards
@@ -546,10 +543,11 @@ class ScreenRecordService : Service() {
             currentHazards.size == 1 -> {
                 val hazard = currentHazards.first()
                 when (hazard) {
-                    "pedestrian" -> "Pedestrian detected"
-                    "pothole" -> "Pothole detected"
-                    "animals" -> "Animal detected"
-                    "roadworks" -> "Road works detected"
+                    "pedestrian" -> "Pedestrian ahead"
+                    "pothole" -> "Pothole ahead"
+                    "humps" -> "Speed hump ahead"
+                    "animals" -> "Animal on road"
+                    "roadworks" -> "Road work ahead"
                     else -> "$hazard detected"
                 }
             }
@@ -661,6 +659,7 @@ data class PerformanceMetrics(
 data class HazardDetectionStats(
     val pedestrians: Int = 0,
     val potholes: Int = 0,
+    val humps: Int = 0,
     val animals: Int = 0,
     val roadWorks: Int = 0
 )

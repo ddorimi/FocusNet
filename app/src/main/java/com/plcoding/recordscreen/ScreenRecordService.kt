@@ -24,8 +24,6 @@ import java.io.FileInputStream
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import java.util.Locale
-import kotlin.math.max
-import kotlin.math.min
 
 class ScreenRecordService : Service() {
 
@@ -36,9 +34,8 @@ class ScreenRecordService : Service() {
         const val STOP_RECORDING = "ACTION_STOP_RECORDING"
         const val KEY_RECORDING_CONFIG = "KEY_RECORDING_CONFIG"
 
-        val isServiceRunning = kotlinx.coroutines.flow.MutableStateFlow(false)
+        val isServiceRunning = MutableStateFlow(false)
 
-        // Performance tracking StateFlows for Dev Mode
         private val _performanceMetrics = MutableStateFlow(PerformanceMetrics())
         val performanceMetrics: StateFlow<PerformanceMetrics> = _performanceMetrics.asStateFlow()
 
@@ -53,7 +50,7 @@ class ScreenRecordService : Service() {
     private var totalDetections = 0
     private var confidenceSum = 0f
     private var frameCount = 0
-    private var processingTimes = mutableListOf<Float>()
+    private val processingTimes = ArrayDeque<Float>(10)
 
     private var mediaProjection: MediaProjection? = null
     private var projectionCallback: MediaProjection.Callback? = null
@@ -80,7 +77,6 @@ class ScreenRecordService : Service() {
         projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
-        // Initialize Text-to-Speech
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.US
@@ -137,7 +133,6 @@ class ScreenRecordService : Service() {
         stopProjectionAndDetection()
         tflite?.close()
 
-        // Shutdown TTS
         tts?.stop()
         tts?.shutdown()
         tts = null
@@ -154,20 +149,42 @@ class ScreenRecordService : Service() {
 
         try {
             loadModelFile(modelFileName)?.let { buffer ->
-                val options = Interpreter.Options().apply { setNumThreads(4) }
+                val options = Interpreter.Options().apply {
+                    setNumThreads(4)
+                    setUseNNAPI(false)  // ✅ Disable NNAPI for compatibility
+                }
                 tflite = Interpreter(buffer, options)
                 currentModelName = modelFileName
+
+                try {
+                    val inputTensor = tflite?.getInputTensor(0)
+                    val outputTensor = tflite?.getOutputTensor(0)
+
+                    Log.d("ScreenRecordService", "=".repeat(60))
+                    Log.d("ScreenRecordService", "📐 MODEL SPECIFICATIONS")
+                    Log.d("ScreenRecordService", "=".repeat(60))
+                    Log.d("ScreenRecordService", "Model: $modelFileName")
+                    Log.d("ScreenRecordService", "Input Shape: ${inputTensor?.shape()?.contentToString()}")
+                    Log.d("ScreenRecordService", "Input Type: ${inputTensor?.dataType()}")
+                    Log.d("ScreenRecordService", "Output Shape: ${outputTensor?.shape()?.contentToString()}")
+                    Log.d("ScreenRecordService", "Output Type: ${outputTensor?.dataType()}")
+                    Log.d("ScreenRecordService", "=".repeat(60))
+                } catch (e: Exception) {
+                    Log.e("ScreenRecordService", "❌ Could not read model specs: ${e.message}")
+                }
+
                 Log.d("ScreenRecordService", "✅ Model '$modelFileName' loaded successfully.")
+            } ?: run {
+                Log.e("ScreenRecordService", "❌ Model file not found: $modelFileName")
             }
         } catch (e: Exception) {
-            Log.w("ScreenRecordService", "Model load failed: ${e.message}")
+            Log.e("ScreenRecordService", "❌ Model load failed: ${e.message}", e)
         }
     }
 
     private fun startProjectionAndDetection(config: ScreenRecordConfig) {
         stopProjectionAndDetection()
 
-        // Reset performance metrics when starting detection
         sessionStartTime = System.currentTimeMillis()
         totalDetections = 0
         confidenceSum = 0f
@@ -178,10 +195,9 @@ class ScreenRecordService : Service() {
         _recentDetections.value = emptyList()
 
         mediaProjection = projectionManager?.getMediaProjection(config.resultCode, config.data)
-        val width = 320
-        val height = 320
+        val width = 416
+        val height = 416
 
-        // Register callback (Android 14+ requires this)
         projectionCallback = object : MediaProjection.Callback() {
             override fun onStop() {
                 super.onStop()
@@ -210,23 +226,21 @@ class ScreenRecordService : Service() {
                 if (img != null) {
                     val bmp = imageToBitmap(img)
                     img.close()
+
                     val input = prepareInput(bmp)
                     val output = runModel(input)
                     val dets = parseModelOutput(output, bmp.width, bmp.height)
 
                     updatePerformanceMetrics(dets, frameStartTime)
-
-                    // Announce detections if voice alert enabled
                     announceDetections(dets)
 
                     withContext(Dispatchers.Main) {
                         overlayView?.setDetections(dets)
                     }
 
-                    // Update recent detections
                     _recentDetections.value = dets
                 }
-                delay(200)
+                delay(100)  // ✅ ~10 FPS for real-time performance
             }
         }
     }
@@ -238,9 +252,9 @@ class ScreenRecordService : Service() {
         frameCount++
         totalDetections += detections.size
 
-        processingTimes.add(processingTime)
+        processingTimes.addLast(processingTime)
         if (processingTimes.size > 10) {
-            processingTimes.removeAt(0)
+            processingTimes.removeFirst()
         }
 
         detections.forEach { detection ->
@@ -276,7 +290,7 @@ class ScreenRecordService : Service() {
             when (detection.label) {
                 "pedestrian" -> pedestrians++
                 "pothole" -> potholes++
-                "humps" -> humps++  // Count humps with potholes (or add separate counter)
+                "humps" -> humps++
                 "animals" -> animals++
                 "roadworks" -> roadWorks++
             }
@@ -300,7 +314,6 @@ class ScreenRecordService : Service() {
         imageReader?.close()
         imageReader = null
 
-        // Unregister callback to avoid leaks
         projectionCallback?.let {
             mediaProjection?.unregisterCallback(it)
             projectionCallback = null
@@ -319,66 +332,91 @@ class ScreenRecordService : Service() {
         val pixelStride = plane.pixelStride
         val rowStride = plane.rowStride
         val rowPadding = rowStride - pixelStride * image.width
-        val bmp = Bitmap.createBitmap(
+
+        val bitmap = Bitmap.createBitmap(
             image.width + rowPadding / pixelStride,
             image.height,
             Bitmap.Config.ARGB_8888
         )
-        bmp.copyPixelsFromBuffer(buffer)
-        return Bitmap.createBitmap(bmp, 0, 0, image.width, image.height)
-    }
+        bitmap.copyPixelsFromBuffer(buffer)
 
-    private fun prepareInput(bitmap: Bitmap): Array<Any> {
-        val inputBmp = Bitmap.createScaledBitmap(bitmap, 320, 320, true)
-        val input = Array(1) { Array(320) { Array(320) { FloatArray(3) } } }
-        for (y in 0 until 320) for (x in 0 until 320) {
-            val px = inputBmp.getPixel(x, y)
-            input[0][y][x][0] = ((px shr 16 and 0xFF) / 255f)
-            input[0][y][x][1] = ((px shr 8 and 0xFF) / 255f)
-            input[0][y][x][2] = ((px and 0xFF) / 255f)
+        return if (rowPadding == 0) {
+            bitmap
+        } else {
+            Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
         }
-        return arrayOf(input)
     }
 
-    private fun runModel(input: Array<Any>): Array<Array<FloatArray>> {
-        // ✅ Correct output shape: [1, 9, 8400]
-        val output = Array(1) { Array(9) { FloatArray(8400) } }  // Changed from 2100 to 8400
+    // ✅ FIXED: Returns correct type and doesn't wrap in extra array
+    private fun prepareInput(bitmap: Bitmap): Array<Array<Array<FloatArray>>> {
+        val inputBmp = Bitmap.createScaledBitmap(bitmap, 416, 416, true)
+        val input = Array(1) { Array(416) { Array(416) { FloatArray(3) } } }
+
+        for (y in 0 until 416) {
+            for (x in 0 until 416) {
+                val px = inputBmp.getPixel(x, y)
+                input[0][y][x][0] = ((px shr 16 and 0xFF) / 255f)
+                input[0][y][x][1] = ((px shr 8 and 0xFF) / 255f)
+                input[0][y][x][2] = ((px and 0xFF) / 255f)
+            }
+        }
+        return input
+    }
+
+    // ✅ FIXED: Correct output shape (3549 instead of 8400)
+    private fun runModel(input: Array<Array<Array<FloatArray>>>): Array<Array<FloatArray>> {
+        val output = Array(1) { Array(9) { FloatArray(3549) } }
         try {
-            tflite?.run(input[0], output)
-            Log.d("ScreenRecordService", "✅ Model inference successful. Output shape: [1, 9, 8400]")
+            tflite?.run(input, output)
+
+            var nonZeroCount = 0
+            var maxScore = 0f
+            var maxScoreIndex = -1
+
+            for (i in 0 until 3549) {
+                for (c in 4 until 9) {
+                    if (output[0][c][i] > 0.01f) {
+                        nonZeroCount++
+                        if (output[0][c][i] > maxScore) {
+                            maxScore = output[0][c][i]
+                            maxScoreIndex = i
+                        }
+                    }
+                }
+            }
+
+            if (maxScoreIndex >= 0) {
+                Log.d("ScreenRecordService", "✅ Best: ${maxScore} @ [${ output[0][0][maxScoreIndex]}, ${output[0][1][maxScoreIndex]}, ${output[0][2][maxScoreIndex]}, ${output[0][3][maxScoreIndex]}]")
+            }
+
         } catch (e: Exception) {
-            Log.e("ScreenRecordService", "❌ Inference failed: ${e.message}")
+            Log.e("ScreenRecordService", "❌ Inference failed: ${e.message}", e)
         }
         return output
     }
 
+    // ✅ FIXED: Changed numBoxes to 3549
     private fun parseModelOutput(
         output: Array<Array<FloatArray>>,
         imageW: Int,
         imageH: Int,
-        confThreshold: Float = 0.25f,    // Start with your training threshold
-        iouThreshold: Float = 0.45f      // NMS IoU threshold
+        confThreshold: Float = 0.35f,  // ✅ Use your export threshold
+        iouThreshold: Float = 0.45f
     ): List<Detection> {
 
-        val preds = output[0] // shape [9][8400]
-        val numBoxes = 8400
-        val rawDetections = ArrayList<Detection>(256)
-
-        // [cx, cy, w, h, class0, class1, class2, class3, class4]
-        // Your model has 5 classes: animals, humps, pedestrian, pothole, roadworks
+        val preds = output[0]
+        val numBoxes = 3549  // ✅ FIXED: Changed from 8400
+        val rawDetections = ArrayList<Detection>(64)
         val classCount = 5
 
         for (i in 0 until numBoxes) {
-            // Read box coordinates (already in normalized format [0,1])
-            val xc = preds[0][i]   // center x (normalized 0-1)
-            val yc = preds[1][i]   // center y (normalized 0-1)
-            val bw = preds[2][i]   // width (normalized 0-1)
-            val bh = preds[3][i]   // height (normalized 0-1)
+            val xc = preds[0][i]
+            val yc = preds[1][i]
+            val bw = preds[2][i]
+            val bh = preds[3][i]
 
-            // classes start at index 4
-            // Read class scores (indices 4-8 for 5 classes)
             var bestClass = 0
-            var bestScore = preds[4][i]  // First class score
+            var bestScore = preds[4][i]
 
             for (c in 1 until classCount) {
                 val score = preds[4 + c][i]
@@ -388,43 +426,29 @@ class ScreenRecordService : Service() {
                 }
             }
 
-            // Filter by confidence threshold
             if (bestScore < confThreshold) continue
 
-            // Convert normalized coords to pixel coordinates
             val left = (xc - bw / 2f) * imageW
             val top = (yc - bh / 2f) * imageH
             val right = (xc + bw / 2f) * imageW
             val bottom = (yc + bh / 2f) * imageH
 
-            // Clamp to image bounds
             val l = left.coerceIn(0f, imageW.toFloat())
             val t = top.coerceIn(0f, imageH.toFloat())
             val r = right.coerceIn(0f, imageW.toFloat())
             val b = bottom.coerceIn(0f, imageH.toFloat())
 
-            // ✅ Skip tiny boxes (noise)
             if ((r - l) < 10f || (b - t) < 10f) continue
 
-            // ✅ Your actual class labels from training
             val labelNames = arrayOf("animals", "humps", "pedestrian", "pothole", "roadworks")
             val label = labelNames.getOrNull(bestClass) ?: "unknown"
 
             rawDetections.add(Detection(RectF(l, t, r, b), label, bestScore))
         }
 
-        Log.d("ScreenRecordService", "📊 Raw detections before NMS: ${rawDetections.size}")
-
-        // Apply NMS
         val final = nonMaxSuppression(rawDetections, iouThreshold)
-
-        Log.d("ScreenRecordService", "✅ Final detections after NMS: ${final.size}")
+        Log.d("ScreenRecordService", "✅ Detections: ${final.size} (from ${rawDetections.size} raw)")
         return final
-    }
-
-    // ----------------- HELPERS -----------------
-    private fun sigmoid(x: Float): Float {
-        return (1f / (1f + kotlin.math.exp(-x)))
     }
 
     private fun iou(a: RectF, b: RectF): Float {
@@ -441,9 +465,6 @@ class ScreenRecordService : Service() {
         return interArea / (areaA + areaB - interArea + 1e-6f)
     }
 
-    /**
-     * Simple NMS: expects unsorted list; returns survivors sorted by descending score.
-     */
     private fun nonMaxSuppression(boxes: List<Detection>, iouThreshold: Float = 0.45f): List<Detection> {
         if (boxes.isEmpty()) return emptyList()
         val sorted = boxes.sortedByDescending { it.score }.toMutableList()
@@ -467,20 +488,26 @@ class ScreenRecordService : Service() {
             val afd = assets.openFd(filename)
             FileInputStream(afd.fileDescriptor).channel
                 .map(FileChannel.MapMode.READ_ONLY, afd.startOffset, afd.declaredLength)
-        } catch (e: Exception) { null }
+        } catch (e: Exception) {
+            Log.e("ScreenRecordService", "❌ Failed to load model file: $filename", e)
+            null
+        }
     }
 
-    /** ✅ Updated overlay flags – now completely touch-through */
     private fun addOverlay() {
         if (overlayAdded) return
         overlayView = OverlayView(this)
+        val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else WindowManager.LayoutParams.TYPE_PHONE,
-            // 👇 Touch-through overlay
+            layoutType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
@@ -498,7 +525,8 @@ class ScreenRecordService : Service() {
     private fun removeOverlay() {
         if (!overlayAdded) return
         try { windowManager?.removeView(overlayView) } catch (_: Exception) {}
-        overlayView = null; overlayAdded = false
+        overlayView = null
+        overlayAdded = false
     }
 
     private fun canDrawOverlays(): Boolean =
@@ -517,7 +545,7 @@ class ScreenRecordService : Service() {
         val stopIntent = Intent(this, ScreenRecordService::class.java).apply { action = STOP_RECORDING }
         val stopPending = PendingIntent.getService(this, 0, stopIntent, PendingIntent.FLAG_IMMUTABLE)
         val notif = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Screen recording with detection")
+            .setContentTitle("FocusNet Detection Active")
             .setContentText("Tap to stop")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPending)
@@ -560,7 +588,6 @@ class ScreenRecordService : Service() {
 
     class OverlayView(ctx: Context) : View(ctx) {
 
-        // Paint for the box outlines
         private val boxPaint = Paint().apply {
             color = Color.RED
             style = Paint.Style.STROKE
@@ -568,46 +595,33 @@ class ScreenRecordService : Service() {
             isAntiAlias = true
         }
 
-        // Paint for the text labels
         private val textPaint = Paint().apply {
-            color = Color.RED
-            textSize = 42f
+            color = Color.WHITE
+            textSize = 36f
             style = Paint.Style.FILL
             isAntiAlias = true
             typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
         }
 
-        // Store detections
+        private val bgPaint = Paint().apply {
+            color = Color.argb(180, 0, 0, 0)
+            style = Paint.Style.FILL
+        }
+
         private var dets: List<Detection> = emptyList()
 
-        // Used for smoothing (to reduce flickering)
-        private var lastDets: List<Detection> = emptyList()
-        private var frameCount = 0
-
-
-        /**
-         * Called from ScreenRecordService to update detections
-         */
         fun setDetections(list: List<Detection>) {
-            frameCount++
-            // Update every 3 frames or if new detections exist
-            if (frameCount % 3 == 0 || list.isNotEmpty()) {
-                lastDets = list
-            }
-            dets = lastDets
+            dets = list
             invalidate()
         }
 
-        /**
-         * Draw boxes + labels
-         */
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            val sx = width / 320f
-            val sy = height / 320f
+            val sx = width / 416f
+            val sy = height / 416f
 
             for (d in dets) {
-                // Draw bounding box
+                // Draw box
                 canvas.drawRect(
                     d.box.left * sx,
                     d.box.top * sy,
@@ -616,24 +630,18 @@ class ScreenRecordService : Service() {
                     boxPaint
                 )
 
-                // Draw background for text
-                val label = "${d.label} (${String.format("%.2f", d.score)})"
+                // Draw label with background
+                val label = "${d.label} ${String.format("%.0f%%", d.score * 100)}"
                 val textWidth = textPaint.measureText(label)
                 val textHeight = textPaint.textSize + 8f
 
                 val rectLeft = d.box.left * sx
-                val rectTop = d.box.top * sy - textHeight
-                val rectRight = rectLeft + textWidth + 16f
+                val rectTop = (d.box.top * sy - textHeight).coerceAtLeast(0f)
+                val rectRight = (rectLeft + textWidth + 16f).coerceAtMost(width.toFloat())
                 val rectBottom = d.box.top * sy
-
-                val bgPaint = Paint().apply {
-                    color = Color.argb(160, 0, 0, 0) // semi-transparent black
-                    style = Paint.Style.FILL
-                }
 
                 canvas.drawRect(rectLeft, rectTop, rectRight, rectBottom, bgPaint)
 
-                // Draw label text
                 canvas.drawText(
                     label,
                     rectLeft + 8f,
@@ -647,7 +655,6 @@ class ScreenRecordService : Service() {
     data class Detection(val box: RectF, val label: String, val score: Float)
 }
 
-// Data classes OUTSIDE the service class
 data class PerformanceMetrics(
     val totalDetections: Int = 0,
     val avgConfidence: Float = 0f,

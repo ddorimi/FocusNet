@@ -191,7 +191,7 @@ fun HazardMenuScreen(
     val isServiceRunning by ScreenRecordService.isServiceRunning.collectAsStateWithLifecycle()
 
     var isVoiceAlertEnabled by remember { mutableStateOf(true) }
-    var selectedModel by remember { mutableStateOf("FocusNet.tflite") }
+    var selectedModel by remember { mutableStateOf("FocusNet_416_v25.tflite") }
     var isModelMenuExpanded by remember { mutableStateOf(false) }
 
     var hasNotificationPermission by remember {
@@ -313,7 +313,7 @@ fun HazardMenuScreen(
                         .padding(12.dp)
                 ) {
                     Text(
-                        text = if (selectedModel == "FocusNet.tflite") "FocusNet" else "SSD Baseline",
+                        text = if (selectedModel == "FocusNet_416_v25.tflite") "FocusNet" else "SSD Baseline",
                         color = Color.White,
                         fontSize = 14.sp
                     )
@@ -326,14 +326,14 @@ fun HazardMenuScreen(
                     DropdownMenuItem(
                         text = { Text("FocusNet") },
                         onClick = {
-                            selectedModel = "FocusNet.tflite"
+                            selectedModel = "FocusNet_416_v25.tflite"
                             isModelMenuExpanded = false
                         }
                     )
                     DropdownMenuItem(
                         text = { Text("SSD Baseline") },
                         onClick = {
-                            selectedModel = "ssd_mobile.ptl"
+                            selectedModel = "baseline.tflite"
                             isModelMenuExpanded = false
                         }
                     )

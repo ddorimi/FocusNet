@@ -12,6 +12,7 @@ import android.os.*
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.util.Log
+import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
@@ -69,7 +70,13 @@ class ScreenRecordService : Service() {
     private var lastAnnounceTime = 0L
     private val announceDebounceMs = 3000L
 
-    // ✅ NEW: Reusable bitmap for better memory management
+    // ✅ NEW: Track capture dimensions for proper scaling
+    private var captureWidth = 416
+    private var captureHeight = 416
+    private var letterboxOffsetX = 0f
+    private var letterboxOffsetY = 0f
+    private var letterboxScale = 1f
+
     private var reusableBitmap: Bitmap? = null
 
     override fun onCreate() {
@@ -187,8 +194,28 @@ class ScreenRecordService : Service() {
         _recentDetections.value = emptyList()
 
         mediaProjection = projectionManager?.getMediaProjection(config.resultCode, config.data)
-        val width = 416
-        val height = 416
+
+        // ✅ FIXED: Calculate capture dimensions based on screen aspect ratio
+        val metrics = resources.displayMetrics
+        val screenWidth = metrics.widthPixels
+        val screenHeight = metrics.heightPixels
+
+        val targetSize = 416
+        val aspectRatio = screenWidth.toFloat() / screenHeight.toFloat()
+
+        if (screenWidth > screenHeight) {
+            // Landscape
+            captureWidth = targetSize
+            captureHeight = (targetSize / aspectRatio).toInt()
+        } else {
+            // Portrait (most common)
+            captureHeight = targetSize
+            captureWidth = (targetSize * aspectRatio).toInt()
+        }
+
+        Log.d("ScreenRecordService", "📱 Screen: ${screenWidth}x${screenHeight}")
+        Log.d("ScreenRecordService", "📷 Capture: ${captureWidth}x${captureHeight}")
+        Log.d("ScreenRecordService", "📐 Aspect Ratio: $aspectRatio")
 
         projectionCallback = object : MediaProjection.Callback() {
             override fun onStop() {
@@ -199,17 +226,16 @@ class ScreenRecordService : Service() {
         }
         mediaProjection?.registerCallback(projectionCallback!!, null)
 
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        imageReader = ImageReader.newInstance(captureWidth, captureHeight, PixelFormat.RGBA_8888, 2)
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "DetectionDisplay",
-            width, height,
+            captureWidth, captureHeight,  // ✅ Use calculated dimensions
             resources.displayMetrics.densityDpi,
             0,
             imageReader?.surface, null, null
         )
         addOverlay()
 
-        // ✅ OPTIMIZED: Faster detection loop
         detectionJob = coroutineScope.launch {
             val reader = imageReader!!
             while (isActive && mediaProjection != null) {
@@ -222,21 +248,20 @@ class ScreenRecordService : Service() {
 
                     val input = prepareInput(bmp)
                     val output = runModel(input)
-                    val dets = parseModelOutput(output, bmp.width, bmp.height)
+                    val dets = parseModelOutput(output, captureWidth, captureHeight)
 
                     updatePerformanceMetrics(dets, frameStartTime)
                     announceDetections(dets)
 
                     withContext(Dispatchers.Main) {
-                        overlayView?.setDetections(dets)
+                        overlayView?.setDetections(dets, captureWidth, captureHeight)
                     }
 
                     _recentDetections.value = dets
                 }
 
-                // ✅ OPTIMIZED: Dynamic delay based on performance
                 val processingTime = System.currentTimeMillis() - frameStartTime
-                val targetDelay = if (processingTime < 50) 60L else 80L  // 12-16 FPS
+                val targetDelay = if (processingTime < 50) 60L else 80L
                 delay(targetDelay)
             }
         }
@@ -323,7 +348,6 @@ class ScreenRecordService : Service() {
     private fun tryAcquire(reader: ImageReader): Image? =
         try { reader.acquireLatestImage() } catch (e: Exception) { null }
 
-    // ✅ OPTIMIZED: Reuse bitmap to reduce allocations
     private fun imageToBitmapOptimized(image: Image): Bitmap {
         val plane = image.planes[0]
         val buffer = plane.buffer
@@ -350,19 +374,57 @@ class ScreenRecordService : Service() {
         }
     }
 
+    // ✅ FIXED: Letterbox resize to preserve aspect ratio
     private fun prepareInput(bitmap: Bitmap): Array<Array<Array<FloatArray>>> {
-        val inputBmp = Bitmap.createScaledBitmap(bitmap, 416, 416, true)
-        val input = Array(1) { Array(416) { Array(416) { FloatArray(3) } } }
+        val modelInputSize = 416
+        val inputBmp = letterboxResize(bitmap, modelInputSize, modelInputSize)
+        val input = Array(1) { Array(modelInputSize) { Array(modelInputSize) { FloatArray(3) } } }
 
-        for (y in 0 until 416) {
-            for (x in 0 until 416) {
+        for (y in 0 until modelInputSize) {
+            for (x in 0 until modelInputSize) {
                 val px = inputBmp.getPixel(x, y)
                 input[0][y][x][0] = ((px shr 16 and 0xFF) / 255f)
                 input[0][y][x][1] = ((px shr 8 and 0xFF) / 255f)
                 input[0][y][x][2] = ((px and 0xFF) / 255f)
             }
         }
+
+        inputBmp.recycle()
         return input
+    }
+
+    // ✅ NEW: Letterbox resize function to preserve aspect ratio
+    private fun letterboxResize(bitmap: Bitmap, targetW: Int, targetH: Int): Bitmap {
+        val srcW = bitmap.width
+        val srcH = bitmap.height
+
+        // Calculate scale to fit within target while preserving aspect ratio
+        val scale = minOf(targetW.toFloat() / srcW, targetH.toFloat() / srcH)
+        val scaledW = (srcW * scale).toInt()
+        val scaledH = (srcH * scale).toInt()
+
+        // Scale the image
+        val scaled = Bitmap.createScaledBitmap(bitmap, scaledW, scaledH, true)
+
+        // Create letterboxed image with gray padding
+        val result = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(result)
+        canvas.drawColor(Color.rgb(114, 114, 114)) // Gray padding
+
+        // Center the scaled image
+        val left = (targetW - scaledW) / 2f
+        val top = (targetH - scaledH) / 2f
+        canvas.drawBitmap(scaled, left, top, null)
+
+        // Store letterbox parameters for coordinate transformation
+        letterboxOffsetX = left
+        letterboxOffsetY = top
+        letterboxScale = scale
+
+        Log.d("ScreenRecordService", "📐 Letterbox: offset=($left, $top), scale=$scale")
+
+        scaled.recycle()
+        return result
     }
 
     private fun runModel(input: Array<Array<Array<FloatArray>>>): Array<Array<FloatArray>> {
@@ -375,19 +437,20 @@ class ScreenRecordService : Service() {
         return output
     }
 
-    // ✅ FIXED: Use higher confidence threshold to reduce ghost detections
+    // ✅ FIXED: Account for letterboxing when converting coordinates
     private fun parseModelOutput(
         output: Array<Array<FloatArray>>,
         imageW: Int,
         imageH: Int,
-        confThreshold: Float = 0.45f,  // ✅ INCREASED from 0.35
-        iouThreshold: Float = 0.50f    // ✅ INCREASED from 0.45
+        confThreshold: Float = 0.45f,
+        iouThreshold: Float = 0.50f
     ): List<Detection> {
 
         val preds = output[0]
         val numBoxes = 3549
         val rawDetections = ArrayList<Detection>(64)
         val classCount = 5
+        val modelSize = 416f
 
         for (i in 0 until numBoxes) {
             val xc = preds[0][i]
@@ -408,17 +471,18 @@ class ScreenRecordService : Service() {
 
             if (bestScore < confThreshold) continue
 
-            val left = (xc - bw / 2f) * imageW
-            val top = (yc - bh / 2f) * imageH
-            val right = (xc + bw / 2f) * imageW
-            val bottom = (yc + bh / 2f) * imageH
+            // ✅ FIXED: Convert from model space to original capture space
+            // accounting for letterboxing
+            val left = ((xc - bw / 2f) * modelSize - letterboxOffsetX) / letterboxScale
+            val top = ((yc - bh / 2f) * modelSize - letterboxOffsetY) / letterboxScale
+            val right = ((xc + bw / 2f) * modelSize - letterboxOffsetX) / letterboxScale
+            val bottom = ((yc + bh / 2f) * modelSize - letterboxOffsetY) / letterboxScale
 
             val l = left.coerceIn(0f, imageW.toFloat())
             val t = top.coerceIn(0f, imageH.toFloat())
             val r = right.coerceIn(0f, imageW.toFloat())
             val b = bottom.coerceIn(0f, imageH.toFloat())
 
-            // ✅ IMPROVED: Better box size validation
             val boxWidth = r - l
             val boxHeight = b - t
             if (boxWidth < 15f || boxHeight < 15f) continue
@@ -505,6 +569,7 @@ class ScreenRecordService : Service() {
         try {
             windowManager?.addView(overlayView, params)
             overlayAdded = true
+            Log.d("ScreenRecordService", "✅ Overlay added successfully")
         } catch (e: Exception) {
             Log.w("ScreenRecordService", "Overlay add failed: ${e.message}")
         }
@@ -574,7 +639,7 @@ class ScreenRecordService : Service() {
         Log.d("ScreenRecordService", "🔊 Announced: $message")
     }
 
-    // ✅ OPTIMIZED: Simplified overlay rendering
+    // ✅ FIXED: Overlay now properly scales from capture dimensions to screen
     class OverlayView(ctx: Context) : View(ctx) {
 
         private val boxPaint = Paint().apply {
@@ -598,16 +663,24 @@ class ScreenRecordService : Service() {
         }
 
         private var dets: List<Detection> = emptyList()
+        private var captureW = 416
+        private var captureH = 416
 
-        fun setDetections(list: List<Detection>) {
+        fun setDetections(list: List<Detection>, capWidth: Int, capHeight: Int) {
             dets = list
-            postInvalidate()  // ✅ Use postInvalidate for better performance
+            captureW = capWidth
+            captureH = capHeight
+            postInvalidate()
         }
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            val sx = width / 416f
-            val sy = height / 416f
+
+            // ✅ FIXED: Scale from capture dimensions to actual screen dimensions
+            val sx = width.toFloat() / captureW.toFloat()
+            val sy = height.toFloat() / captureH.toFloat()
+
+            Log.d("OverlayView", "Drawing ${dets.size} detections, scale=($sx, $sy)")
 
             for (d in dets) {
                 // Draw box

@@ -191,7 +191,6 @@ fun HazardMenuScreen(
     val isServiceRunning by ScreenRecordService.isServiceRunning.collectAsStateWithLifecycle()
 
     var isVoiceAlertEnabled by remember { mutableStateOf(true) }
-    // ✅ REMOVED: Model selection - always use focusnet_optimized.tflite
 
     var hasNotificationPermission by remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -211,7 +210,7 @@ fun HazardMenuScreen(
         val config = ScreenRecordConfig(
             resultCode = result.resultCode,
             data = intent,
-            modelFileName = "focusnet_optimized.tflite",  // ✅ Always use this
+            modelFileName = "focusnet.tflite",
             isVoiceAlertEnabled = isVoiceAlertEnabled
         )
         val serviceIntent = Intent(context, ScreenRecordService::class.java).apply {

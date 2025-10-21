@@ -191,8 +191,7 @@ fun HazardMenuScreen(
     val isServiceRunning by ScreenRecordService.isServiceRunning.collectAsStateWithLifecycle()
 
     var isVoiceAlertEnabled by remember { mutableStateOf(true) }
-    var selectedModel by remember { mutableStateOf("FocusNet_416_v25.tflite") }
-    var isModelMenuExpanded by remember { mutableStateOf(false) }
+    // ✅ REMOVED: Model selection - always use focusnet_optimized.tflite
 
     var hasNotificationPermission by remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -212,12 +211,12 @@ fun HazardMenuScreen(
         val config = ScreenRecordConfig(
             resultCode = result.resultCode,
             data = intent,
-            modelFileName = selectedModel,
+            modelFileName = "focusnet_optimized.tflite",  // ✅ Always use this
             isVoiceAlertEnabled = isVoiceAlertEnabled
         )
         val serviceIntent = Intent(context, ScreenRecordService::class.java).apply {
-            action = START_RECORDING
-            putExtra(KEY_RECORDING_CONFIG, config)
+            action = ScreenRecordService.START_RECORDING
+            putExtra(ScreenRecordService.KEY_RECORDING_CONFIG, config)
         }
         ContextCompat.startForegroundService(context, serviceIntent)
     }
@@ -291,64 +290,13 @@ fun HazardMenuScreen(
 
         Spacer(modifier = Modifier.height(50.dp))
 
-        // Model Selection Dropdown
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 40.dp)
-        ) {
-            Column {
-                Text(
-                    text = "Select Model",
-                    fontSize = 14.sp,
-                    color = Color.White,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFF3D5A80), RoundedCornerShape(8.dp))
-                        .clickable { isModelMenuExpanded = true }
-                        .padding(12.dp)
-                ) {
-                    Text(
-                        text = if (selectedModel == "FocusNet_416_v25.tflite") "FocusNet" else "SSD Baseline",
-                        color = Color.White,
-                        fontSize = 14.sp
-                    )
-                }
-
-                DropdownMenu(
-                    expanded = isModelMenuExpanded,
-                    onDismissRequest = { isModelMenuExpanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("FocusNet") },
-                        onClick = {
-                            selectedModel = "FocusNet_416_v25.tflite"
-                            isModelMenuExpanded = false
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("SSD Baseline") },
-                        onClick = {
-                            selectedModel = "baseline.tflite"
-                            isModelMenuExpanded = false
-                        }
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
+        // ✅ REMOVED: Model selection dropdown - no longer needed
 
         // Voice Alert Toggle
         Box(
             modifier = Modifier.fillMaxWidth(),
             contentAlignment = Alignment.CenterStart
         ) {
-
             Row(
                 modifier = Modifier
                     .padding(vertical = 10.dp)
@@ -386,7 +334,7 @@ fun HazardMenuScreen(
                 } else {
                     if (isServiceRunning) {
                         Intent(context, ScreenRecordService::class.java).also {
-                            it.action = STOP_RECORDING
+                            it.action = ScreenRecordService.STOP_RECORDING
                             ContextCompat.startForegroundService(context, it)
                         }
                     } else {
@@ -450,7 +398,6 @@ fun HazardMenuScreen(
         }
     }
 }
-
 // ==================== ABOUT US SCREEN ====================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

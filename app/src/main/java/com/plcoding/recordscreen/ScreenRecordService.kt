@@ -35,13 +35,10 @@ class ScreenRecordService : Service() {
         const val KEY_RECORDING_CONFIG = "KEY_RECORDING_CONFIG"
 
         val isServiceRunning = MutableStateFlow(false)
-
         private val _performanceMetrics = MutableStateFlow(PerformanceMetrics())
         val performanceMetrics: StateFlow<PerformanceMetrics> = _performanceMetrics.asStateFlow()
-
         private val _hazardStats = MutableStateFlow(HazardDetectionStats())
         val hazardStats: StateFlow<HazardDetectionStats> = _hazardStats.asStateFlow()
-
         private val _recentDetections = MutableStateFlow<List<Detection>>(emptyList())
         val recentDetections: StateFlow<List<Detection>> = _recentDetections.asStateFlow()
     }
@@ -71,6 +68,9 @@ class ScreenRecordService : Service() {
     private var lastAnnouncedHazards = setOf<String>()
     private var lastAnnounceTime = 0L
     private val announceDebounceMs = 3000L
+
+    // ✅ NEW: Reusable bitmap for better memory management
+    private var reusableBitmap: Bitmap? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -132,11 +132,11 @@ class ScreenRecordService : Service() {
         super.onDestroy()
         stopProjectionAndDetection()
         tflite?.close()
-
         tts?.stop()
         tts?.shutdown()
         tts = null
-
+        reusableBitmap?.recycle()
+        reusableBitmap = null
         coroutineScope.cancel()
         isServiceRunning.value = false
     }
@@ -151,29 +151,21 @@ class ScreenRecordService : Service() {
             loadModelFile(modelFileName)?.let { buffer ->
                 val options = Interpreter.Options().apply {
                     setNumThreads(4)
-                    setUseNNAPI(false)  // ✅ Disable NNAPI for compatibility
+                    setUseNNAPI(false)
                 }
                 tflite = Interpreter(buffer, options)
                 currentModelName = modelFileName
 
-                try {
-                    val inputTensor = tflite?.getInputTensor(0)
-                    val outputTensor = tflite?.getOutputTensor(0)
+                val inputTensor = tflite?.getInputTensor(0)
+                val outputTensor = tflite?.getOutputTensor(0)
 
-                    Log.d("ScreenRecordService", "=".repeat(60))
-                    Log.d("ScreenRecordService", "📐 MODEL SPECIFICATIONS")
-                    Log.d("ScreenRecordService", "=".repeat(60))
-                    Log.d("ScreenRecordService", "Model: $modelFileName")
-                    Log.d("ScreenRecordService", "Input Shape: ${inputTensor?.shape()?.contentToString()}")
-                    Log.d("ScreenRecordService", "Input Type: ${inputTensor?.dataType()}")
-                    Log.d("ScreenRecordService", "Output Shape: ${outputTensor?.shape()?.contentToString()}")
-                    Log.d("ScreenRecordService", "Output Type: ${outputTensor?.dataType()}")
-                    Log.d("ScreenRecordService", "=".repeat(60))
-                } catch (e: Exception) {
-                    Log.e("ScreenRecordService", "❌ Could not read model specs: ${e.message}")
-                }
+                Log.d("ScreenRecordService", "=".repeat(60))
+                Log.d("ScreenRecordService", "📐 MODEL LOADED: $modelFileName")
+                Log.d("ScreenRecordService", "Input: ${inputTensor?.shape()?.contentToString()}")
+                Log.d("ScreenRecordService", "Output: ${outputTensor?.shape()?.contentToString()}")
+                Log.d("ScreenRecordService", "=".repeat(60))
 
-                Log.d("ScreenRecordService", "✅ Model '$modelFileName' loaded successfully.")
+                Log.d("ScreenRecordService", "✅ Model loaded successfully")
             } ?: run {
                 Log.e("ScreenRecordService", "❌ Model file not found: $modelFileName")
             }
@@ -217,6 +209,7 @@ class ScreenRecordService : Service() {
         )
         addOverlay()
 
+        // ✅ OPTIMIZED: Faster detection loop
         detectionJob = coroutineScope.launch {
             val reader = imageReader!!
             while (isActive && mediaProjection != null) {
@@ -224,7 +217,7 @@ class ScreenRecordService : Service() {
 
                 val img = tryAcquire(reader)
                 if (img != null) {
-                    val bmp = imageToBitmap(img)
+                    val bmp = imageToBitmapOptimized(img)
                     img.close()
 
                     val input = prepareInput(bmp)
@@ -240,7 +233,11 @@ class ScreenRecordService : Service() {
 
                     _recentDetections.value = dets
                 }
-                delay(100)  // ✅ ~10 FPS for real-time performance
+
+                // ✅ OPTIMIZED: Dynamic delay based on performance
+                val processingTime = System.currentTimeMillis() - frameStartTime
+                val targetDelay = if (processingTime < 50) 60L else 80L  // 12-16 FPS
+                delay(targetDelay)
             }
         }
     }
@@ -326,28 +323,33 @@ class ScreenRecordService : Service() {
     private fun tryAcquire(reader: ImageReader): Image? =
         try { reader.acquireLatestImage() } catch (e: Exception) { null }
 
-    private fun imageToBitmap(image: Image): Bitmap {
+    // ✅ OPTIMIZED: Reuse bitmap to reduce allocations
+    private fun imageToBitmapOptimized(image: Image): Bitmap {
         val plane = image.planes[0]
         val buffer = plane.buffer
         val pixelStride = plane.pixelStride
         val rowStride = plane.rowStride
         val rowPadding = rowStride - pixelStride * image.width
 
-        val bitmap = Bitmap.createBitmap(
-            image.width + rowPadding / pixelStride,
-            image.height,
-            Bitmap.Config.ARGB_8888
-        )
-        bitmap.copyPixelsFromBuffer(buffer)
+        val width = image.width + rowPadding / pixelStride
+        val height = image.height
+
+        if (reusableBitmap == null ||
+            reusableBitmap?.width != width ||
+            reusableBitmap?.height != height) {
+            reusableBitmap?.recycle()
+            reusableBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        }
+
+        reusableBitmap?.copyPixelsFromBuffer(buffer)
 
         return if (rowPadding == 0) {
-            bitmap
+            reusableBitmap!!
         } else {
-            Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
+            Bitmap.createBitmap(reusableBitmap!!, 0, 0, image.width, image.height)
         }
     }
 
-    // ✅ FIXED: Returns correct type and doesn't wrap in extra array
     private fun prepareInput(bitmap: Bitmap): Array<Array<Array<FloatArray>>> {
         val inputBmp = Bitmap.createScaledBitmap(bitmap, 416, 416, true)
         val input = Array(1) { Array(416) { Array(416) { FloatArray(3) } } }
@@ -363,49 +365,27 @@ class ScreenRecordService : Service() {
         return input
     }
 
-    // ✅ FIXED: Correct output shape (3549 instead of 8400)
     private fun runModel(input: Array<Array<Array<FloatArray>>>): Array<Array<FloatArray>> {
         val output = Array(1) { Array(9) { FloatArray(3549) } }
         try {
             tflite?.run(input, output)
-
-            var nonZeroCount = 0
-            var maxScore = 0f
-            var maxScoreIndex = -1
-
-            for (i in 0 until 3549) {
-                for (c in 4 until 9) {
-                    if (output[0][c][i] > 0.01f) {
-                        nonZeroCount++
-                        if (output[0][c][i] > maxScore) {
-                            maxScore = output[0][c][i]
-                            maxScoreIndex = i
-                        }
-                    }
-                }
-            }
-
-            if (maxScoreIndex >= 0) {
-                Log.d("ScreenRecordService", "✅ Best: ${maxScore} @ [${ output[0][0][maxScoreIndex]}, ${output[0][1][maxScoreIndex]}, ${output[0][2][maxScoreIndex]}, ${output[0][3][maxScoreIndex]}]")
-            }
-
         } catch (e: Exception) {
             Log.e("ScreenRecordService", "❌ Inference failed: ${e.message}", e)
         }
         return output
     }
 
-    // ✅ FIXED: Changed numBoxes to 3549
+    // ✅ FIXED: Use higher confidence threshold to reduce ghost detections
     private fun parseModelOutput(
         output: Array<Array<FloatArray>>,
         imageW: Int,
         imageH: Int,
-        confThreshold: Float = 0.35f,  // ✅ Use your export threshold
-        iouThreshold: Float = 0.45f
+        confThreshold: Float = 0.45f,  // ✅ INCREASED from 0.35
+        iouThreshold: Float = 0.50f    // ✅ INCREASED from 0.45
     ): List<Detection> {
 
         val preds = output[0]
-        val numBoxes = 3549  // ✅ FIXED: Changed from 8400
+        val numBoxes = 3549
         val rawDetections = ArrayList<Detection>(64)
         val classCount = 5
 
@@ -438,7 +418,11 @@ class ScreenRecordService : Service() {
             val r = right.coerceIn(0f, imageW.toFloat())
             val b = bottom.coerceIn(0f, imageH.toFloat())
 
-            if ((r - l) < 10f || (b - t) < 10f) continue
+            // ✅ IMPROVED: Better box size validation
+            val boxWidth = r - l
+            val boxHeight = b - t
+            if (boxWidth < 15f || boxHeight < 15f) continue
+            if (boxWidth > imageW * 0.9f || boxHeight > imageH * 0.9f) continue
 
             val labelNames = arrayOf("animals", "humps", "pedestrian", "pothole", "roadworks")
             val label = labelNames.getOrNull(bestClass) ?: "unknown"
@@ -447,7 +431,11 @@ class ScreenRecordService : Service() {
         }
 
         val final = nonMaxSuppression(rawDetections, iouThreshold)
-        Log.d("ScreenRecordService", "✅ Detections: ${final.size} (from ${rawDetections.size} raw)")
+
+        if (final.isNotEmpty()) {
+            Log.d("ScreenRecordService", "✅ Detections: ${final.size} (filtered from ${rawDetections.size})")
+        }
+
         return final
     }
 
@@ -465,7 +453,7 @@ class ScreenRecordService : Service() {
         return interArea / (areaA + areaB - interArea + 1e-6f)
     }
 
-    private fun nonMaxSuppression(boxes: List<Detection>, iouThreshold: Float = 0.45f): List<Detection> {
+    private fun nonMaxSuppression(boxes: List<Detection>, iouThreshold: Float = 0.50f): List<Detection> {
         if (boxes.isEmpty()) return emptyList()
         val sorted = boxes.sortedByDescending { it.score }.toMutableList()
         val keep = ArrayList<Detection>()
@@ -586,6 +574,7 @@ class ScreenRecordService : Service() {
         Log.d("ScreenRecordService", "🔊 Announced: $message")
     }
 
+    // ✅ OPTIMIZED: Simplified overlay rendering
     class OverlayView(ctx: Context) : View(ctx) {
 
         private val boxPaint = Paint().apply {
@@ -612,7 +601,7 @@ class ScreenRecordService : Service() {
 
         fun setDetections(list: List<Detection>) {
             dets = list
-            invalidate()
+            postInvalidate()  // ✅ Use postInvalidate for better performance
         }
 
         override fun onDraw(canvas: Canvas) {

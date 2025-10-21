@@ -442,7 +442,7 @@ class ScreenRecordService : Service() {
         output: Array<Array<FloatArray>>,
         imageW: Int,
         imageH: Int,
-        confThreshold: Float = 0.45f,
+        confThreshold: Float = 0.50f,
         iouThreshold: Float = 0.50f
     ): List<Detection> {
 

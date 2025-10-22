@@ -69,6 +69,7 @@ class ScreenRecordService : Service() {
     private var lastAnnounceTime = 0L
     private val announceDebounceMs = 3000L
 
+    // Capture dimensions for proper scaling
     private var captureWidth = 416
     private var captureHeight = 416
     private var letterboxOffsetX = 0f
@@ -76,7 +77,9 @@ class ScreenRecordService : Service() {
     private var letterboxScale = 1f
 
     private var reusableBitmap: Bitmap? = null
-    private var userConfidenceThreshold = 0.45f
+
+    // ✅ NEW: User-adjustable confidence threshold
+    private var userConfidenceThreshold = 0.45f  // Default from training
 
     override fun onCreate() {
         super.onCreate()
@@ -111,6 +114,7 @@ class ScreenRecordService : Service() {
                         return START_NOT_STICKY
                     }
 
+                    // ✅ Get user settings from config
                     isVoiceAlertEnabled = config.isVoiceAlertEnabled
                     userConfidenceThreshold = config.confidenceThreshold
 
@@ -200,11 +204,16 @@ class ScreenRecordService : Service() {
 
         mediaProjection = projectionManager?.getMediaProjection(config.resultCode, config.data)
 
+        // ✅ FIXED: Use FULL screen dimensions (dashcam video is displayed here)
         val metrics = resources.displayMetrics
         captureWidth = metrics.widthPixels
         captureHeight = metrics.heightPixels
 
-        Log.d("ScreenRecordService", "📱 Screen: ${captureWidth}x${captureHeight}")
+        Log.d("ScreenRecordService", "=".repeat(60))
+        Log.d("ScreenRecordService", "📱 DASHCAM CAPTURE SETUP")
+        Log.d("ScreenRecordService", "Screen: ${captureWidth}x${captureHeight}")
+        Log.d("ScreenRecordService", "Model Input: 416x416")
+        Log.d("ScreenRecordService", "=".repeat(60))
 
         projectionCallback = object : MediaProjection.Callback() {
             override fun onStop() {
@@ -237,6 +246,8 @@ class ScreenRecordService : Service() {
 
                     val input = prepareInput(bmp)
                     val output = runModel(input)
+
+                    // ✅ CRITICAL: Use bitmap dimensions for coordinate mapping
                     val dets = parseModelOutput(output, bmp.width, bmp.height)
 
                     updatePerformanceMetrics(dets, frameStartTime)
@@ -385,12 +396,14 @@ class ScreenRecordService : Service() {
         val srcW = bitmap.width
         val srcH = bitmap.height
 
+        // Calculate scale to fit within target
         val scale = minOf(targetW.toFloat() / srcW, targetH.toFloat() / srcH)
         val scaledW = (srcW * scale).toInt()
         val scaledH = (srcH * scale).toInt()
 
         val scaled = Bitmap.createScaledBitmap(bitmap, scaledW, scaledH, true)
 
+        // Create letterboxed image
         val result = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(result)
         canvas.drawColor(Color.rgb(114, 114, 114))
@@ -399,9 +412,16 @@ class ScreenRecordService : Service() {
         val top = (targetH - scaledH) / 2f
         canvas.drawBitmap(scaled, left, top, null)
 
+        // ✅ Store transformation parameters
         letterboxOffsetX = left
         letterboxOffsetY = top
         letterboxScale = scale
+
+        Log.d("ScreenRecordService", "📦 Letterbox Transform:")
+        Log.d("ScreenRecordService", "   Source: ${srcW}x${srcH}")
+        Log.d("ScreenRecordService", "   Scaled: ${scaledW}x${scaledH}")
+        Log.d("ScreenRecordService", "   Offset: (${left.toInt()}, ${top.toInt()})")
+        Log.d("ScreenRecordService", "   Scale: ${"%.4f".format(scale)}")
 
         scaled.recycle()
         return result
@@ -429,14 +449,18 @@ class ScreenRecordService : Service() {
         val numBoxes = 3549
         val rawDetections = ArrayList<Detection>(64)
         val classCount = 5
-        val modelSize = 416f
+
+        Log.d("ScreenRecordService", "🔍 Parsing detections for image: ${imageW}x${imageH}")
+        Log.d("ScreenRecordService", "   Letterbox: offset=(${letterboxOffsetX}, ${letterboxOffsetY}), scale=${letterboxScale}")
 
         for (i in 0 until numBoxes) {
-            val xc_norm = preds[0][i]
-            val yc_norm = preds[1][i]
-            val w_norm = preds[2][i]
-            val h_norm = preds[3][i]
+            // ✅ Model outputs normalized coordinates [0,1]
+            val xc_norm = preds[0][i]  // Center X (normalized)
+            val yc_norm = preds[1][i]  // Center Y (normalized)
+            val w_norm = preds[2][i]   // Width (normalized)
+            val h_norm = preds[3][i]   // Height (normalized)
 
+            // Get best class
             var bestClass = 0
             var bestScore = preds[4][i]
             for (c in 1 until classCount) {
@@ -449,19 +473,24 @@ class ScreenRecordService : Service() {
 
             if (bestScore < confThreshold) continue
 
+            // ✅ STEP 1: Convert normalized coords to 416x416 model space
+            val modelSize = 416f
             val xc_model = xc_norm * modelSize
             val yc_model = yc_norm * modelSize
             val w_model = w_norm * modelSize
             val h_model = h_norm * modelSize
 
+            // ✅ STEP 2: Remove letterbox padding
             val xc_scaled = xc_model - letterboxOffsetX
             val yc_scaled = yc_model - letterboxOffsetY
 
+            // ✅ STEP 3: Scale back to original image size
             val xc_original = xc_scaled / letterboxScale
             val yc_original = yc_scaled / letterboxScale
             val w_original = w_model / letterboxScale
             val h_original = h_model / letterboxScale
 
+            // ✅ STEP 4: Convert center-based to corner-based coordinates
             val left = (xc_original - w_original / 2f).coerceIn(0f, imageW.toFloat())
             val top = (yc_original - h_original / 2f).coerceIn(0f, imageH.toFloat())
             val right = (xc_original + w_original / 2f).coerceIn(0f, imageW.toFloat())
@@ -470,6 +499,7 @@ class ScreenRecordService : Service() {
             val boxWidth = right - left
             val boxHeight = bottom - top
 
+            // ✅ Filter invalid boxes (adjust thresholds for dashcam)
             if (boxWidth < 15f || boxHeight < 15f) continue
             if (boxWidth > imageW * 0.95f || boxHeight > imageH * 0.95f) continue
 
@@ -482,12 +512,15 @@ class ScreenRecordService : Service() {
         val final = nonMaxSuppression(rawDetections, iouThreshold)
 
         if (final.isNotEmpty()) {
-            Log.d("ScreenRecordService", "✅ Detections: ${final.size} (from ${rawDetections.size})")
+            Log.d("ScreenRecordService", "✅ Final Detections: ${final.size} (from ${rawDetections.size} raw)")
+            final.forEach { det ->
+                Log.d("ScreenRecordService", "   ${det.label} ${(det.score * 100).toInt()}%: " +
+                        "[${det.box.left.toInt()}, ${det.box.top.toInt()}, ${det.box.right.toInt()}, ${det.box.bottom.toInt()}]")
+            }
         }
 
         return final
     }
-
     private fun iou(a: RectF, b: RectF): Float {
         val interLeft = maxOf(a.left, b.left)
         val interTop = maxOf(a.top, b.top)
@@ -509,7 +542,13 @@ class ScreenRecordService : Service() {
         while (sorted.isNotEmpty()) {
             val a = sorted.removeAt(0)
             keep.add(a)
-            sorted.removeAll { b -> iou(a.box, b.box) > iouThreshold }
+            val it = sorted.iterator()
+            while (it.hasNext()) {
+                val b = it.next()
+                if (iou(a.box, b.box) > iouThreshold) {
+                    it.remove()
+                }
+            }
         }
         return keep
     }
@@ -622,20 +661,20 @@ class ScreenRecordService : Service() {
         private val boxPaint = Paint().apply {
             color = Color.RED
             style = Paint.Style.STROKE
-            strokeWidth = 8f
+            strokeWidth = 8f  // ✅ Thicker for dashcam visibility
             isAntiAlias = true
         }
 
         private val textPaint = Paint().apply {
             color = Color.WHITE
-            textSize = 42f
+            textSize = 42f  // ✅ Larger for dashcam
             style = Paint.Style.FILL
             isAntiAlias = true
             typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
         }
 
         private val bgPaint = Paint().apply {
-            color = Color.argb(200, 0, 0, 0)
+            color = Color.argb(200, 0, 0, 0)  // ✅ More opaque
             style = Paint.Style.FILL
         }
 
@@ -655,17 +694,23 @@ class ScreenRecordService : Service() {
 
             if (dets.isEmpty()) return
 
+            // ✅ FIXED: Scale from capture dimensions to overlay dimensions
             val scaleX = width.toFloat() / captureW.toFloat()
             val scaleY = height.toFloat() / captureH.toFloat()
 
+            Log.d("OverlayView", "Drawing ${dets.size} boxes: capture=${captureW}x${captureH}, overlay=${width}x${height}, scale=(${"%.3f".format(scaleX)},${"%.3f".format(scaleY)})")
+
             for (det in dets) {
+                // Scale box coordinates
                 val left = det.box.left * scaleX
                 val top = det.box.top * scaleY
                 val right = det.box.right * scaleX
                 val bottom = det.box.bottom * scaleY
 
+                // Draw bounding box
                 canvas.drawRect(left, top, right, bottom, boxPaint)
 
+                // Draw label
                 val label = "${det.label} ${(det.score * 100).toInt()}%"
                 val textWidth = textPaint.measureText(label)
                 val textHeight = textPaint.textSize + 12f
@@ -677,12 +722,11 @@ class ScreenRecordService : Service() {
 
                 canvas.drawRect(rectLeft, rectTop, rectRight, rectBottom, bgPaint)
                 canvas.drawText(label, left + 10f, top - 10f, textPaint)
+
+                Log.d("OverlayView", "  ${det.label}: box=[${left.toInt()},${top.toInt()},${right.toInt()},${bottom.toInt()}]")
             }
         }
     }
-
-    data class Detection(val box: RectF, val label: String, val score: Float)
-}
 
 data class PerformanceMetrics(
     val totalDetections: Int = 0,

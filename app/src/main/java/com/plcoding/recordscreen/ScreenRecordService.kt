@@ -87,9 +87,9 @@ class ScreenRecordService : Service() {
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.US
                 isTtsReady = true
-                Log.d("ScreenRecordService", " TTS initialized successfully")
+                Log.d("ScreenRecordService", "✅ TTS initialized successfully")
             } else {
-                Log.w("ScreenRecordService", " TTS initialization failed")
+                Log.w("ScreenRecordService", "❌ TTS initialization failed")
             }
         }
 
@@ -115,7 +115,7 @@ class ScreenRecordService : Service() {
                     userConfidenceThreshold = config.confidenceThreshold
 
                     Log.d("ScreenRecordService", "=".repeat(60))
-                    Log.d("ScreenRecordService", " USER SETTINGS")
+                    Log.d("ScreenRecordService", "🎯 USER SETTINGS")
                     Log.d("ScreenRecordService", "Confidence Threshold: ${(userConfidenceThreshold * 100).toInt()}%")
                     Log.d("ScreenRecordService", "Voice Alerts: ${if (isVoiceAlertEnabled) "ON" else "OFF"}")
                     Log.d("ScreenRecordService", "=".repeat(60))
@@ -173,16 +173,16 @@ class ScreenRecordService : Service() {
                 val outputTensor = tflite?.getOutputTensor(0)
 
                 Log.d("ScreenRecordService", "=".repeat(60))
-                Log.d("ScreenRecordService", " MODEL LOADED")
+                Log.d("ScreenRecordService", "📐 MODEL LOADED")
                 Log.d("ScreenRecordService", "File: $modelFileName")
                 Log.d("ScreenRecordService", "Input: ${inputTensor?.shape()?.contentToString()}")
                 Log.d("ScreenRecordService", "Output: ${outputTensor?.shape()?.contentToString()}")
                 Log.d("ScreenRecordService", "=".repeat(60))
             } ?: run {
-                Log.e("ScreenRecordService", " Model file not found: $modelFileName")
+                Log.e("ScreenRecordService", "❌ Model file not found: $modelFileName")
             }
         } catch (e: Exception) {
-            Log.e("ScreenRecordService", " Model load failed: ${e.message}", e)
+            Log.e("ScreenRecordService", "❌ Model load failed: ${e.message}", e)
         }
     }
 
@@ -204,12 +204,12 @@ class ScreenRecordService : Service() {
         captureWidth = metrics.widthPixels
         captureHeight = metrics.heightPixels
 
-        Log.d("ScreenRecordService", " Screen: ${captureWidth}x${captureHeight}")
+        Log.d("ScreenRecordService", "📱 Screen: ${captureWidth}x${captureHeight}")
 
         projectionCallback = object : MediaProjection.Callback() {
             override fun onStop() {
                 super.onStop()
-                Log.w("ScreenRecordService", " MediaProjection stopped by system.")
+                Log.w("ScreenRecordService", "⚠️ MediaProjection stopped by system.")
                 stopProjectionAndDetection()
             }
         }
@@ -412,7 +412,7 @@ class ScreenRecordService : Service() {
         try {
             tflite?.run(input, output)
         } catch (e: Exception) {
-            Log.e("ScreenRecordService", " Inference failed: ${e.message}", e)
+            Log.e("ScreenRecordService", "❌ Inference failed: ${e.message}", e)
         }
         return output
     }
@@ -482,7 +482,7 @@ class ScreenRecordService : Service() {
         val final = nonMaxSuppression(rawDetections, iouThreshold)
 
         if (final.isNotEmpty()) {
-            Log.d("ScreenRecordService", " Detections: ${final.size} (from ${rawDetections.size})")
+            Log.d("ScreenRecordService", "✅ Detections: ${final.size} (from ${rawDetections.size})")
         }
 
         return final
@@ -520,7 +520,7 @@ class ScreenRecordService : Service() {
             FileInputStream(afd.fileDescriptor).channel
                 .map(FileChannel.MapMode.READ_ONLY, afd.startOffset, afd.declaredLength)
         } catch (e: Exception) {
-            Log.e("ScreenRecordService", " Failed to load model file: $filename", e)
+            Log.e("ScreenRecordService", "❌ Failed to load model file: $filename", e)
             null
         }
     }
@@ -614,7 +614,7 @@ class ScreenRecordService : Service() {
         }
 
         tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null, null)
-        Log.d("ScreenRecordService", " Announced: $message")
+        Log.d("ScreenRecordService", "🔊 Announced: $message")
     }
 
     class OverlayView(ctx: Context) : View(ctx) {

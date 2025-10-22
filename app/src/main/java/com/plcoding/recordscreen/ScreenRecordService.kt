@@ -69,7 +69,6 @@ class ScreenRecordService : Service() {
     private var lastAnnounceTime = 0L
     private val announceDebounceMs = 3000L
 
-    // Capture dimensions for proper scaling
     private var captureWidth = 416
     private var captureHeight = 416
     private var letterboxOffsetX = 0f
@@ -77,9 +76,7 @@ class ScreenRecordService : Service() {
     private var letterboxScale = 1f
 
     private var reusableBitmap: Bitmap? = null
-
-    // ✅ NEW: User-adjustable confidence threshold
-    private var userConfidenceThreshold = 0.45f  // Default from training
+    private var userConfidenceThreshold = 0.45f
 
     override fun onCreate() {
         super.onCreate()
@@ -114,7 +111,6 @@ class ScreenRecordService : Service() {
                         return START_NOT_STICKY
                     }
 
-                    // ✅ Get user settings from config
                     isVoiceAlertEnabled = config.isVoiceAlertEnabled
                     userConfidenceThreshold = config.confidenceThreshold
 
@@ -204,25 +200,11 @@ class ScreenRecordService : Service() {
 
         mediaProjection = projectionManager?.getMediaProjection(config.resultCode, config.data)
 
-        // Calculate capture dimensions based on screen aspect ratio
         val metrics = resources.displayMetrics
-        val screenWidth = metrics.widthPixels
-        val screenHeight = metrics.heightPixels
+        captureWidth = metrics.widthPixels
+        captureHeight = metrics.heightPixels
 
-        val targetSize = 416
-        val aspectRatio = screenWidth.toFloat() / screenHeight.toFloat()
-
-        if (screenWidth > screenHeight) {
-            captureWidth = targetSize
-            captureHeight = (targetSize / aspectRatio).toInt()
-        } else {
-            captureHeight = targetSize
-            captureWidth = (targetSize * aspectRatio).toInt()
-        }
-
-        Log.d("ScreenRecordService", "📱 Screen: ${screenWidth}x${screenHeight}")
-        Log.d("ScreenRecordService", "📷 Capture: ${captureWidth}x${captureHeight}")
-        Log.d("ScreenRecordService", "📐 Aspect: ${"%.2f".format(aspectRatio)}")
+        Log.d("ScreenRecordService", "📱 Screen: ${captureWidth}x${captureHeight}")
 
         projectionCallback = object : MediaProjection.Callback() {
             override fun onStop() {
@@ -255,13 +237,13 @@ class ScreenRecordService : Service() {
 
                     val input = prepareInput(bmp)
                     val output = runModel(input)
-                    val dets = parseModelOutput(output, captureWidth, captureHeight)
+                    val dets = parseModelOutput(output, bmp.width, bmp.height)
 
                     updatePerformanceMetrics(dets, frameStartTime)
                     announceDetections(dets)
 
                     withContext(Dispatchers.Main) {
-                        overlayView?.setDetections(dets, captureWidth, captureHeight)
+                        overlayView?.setDetections(dets, bmp.width, bmp.height)
                     }
 
                     _recentDetections.value = dets
@@ -435,15 +417,14 @@ class ScreenRecordService : Service() {
         return output
     }
 
-    // FIXED: Use user's confidence threshold
     private fun parseModelOutput(
         output: Array<Array<FloatArray>>,
         imageW: Int,
         imageH: Int
     ): List<Detection> {
 
-        val confThreshold = userConfidenceThreshold  // ✅ Use user's setting
-        val iouThreshold = 0.50f  // Keep IoU fixed
+        val confThreshold = userConfidenceThreshold
+        val iouThreshold = 0.50f
         val preds = output[0]
         val numBoxes = 3549
         val rawDetections = ArrayList<Detection>(64)
@@ -451,14 +432,13 @@ class ScreenRecordService : Service() {
         val modelSize = 416f
 
         for (i in 0 until numBoxes) {
-            val xc = preds[0][i]
-            val yc = preds[1][i]
-            val bw = preds[2][i]
-            val bh = preds[3][i]
+            val xc_norm = preds[0][i]
+            val yc_norm = preds[1][i]
+            val w_norm = preds[2][i]
+            val h_norm = preds[3][i]
 
             var bestClass = 0
             var bestScore = preds[4][i]
-
             for (c in 1 until classCount) {
                 val score = preds[4 + c][i]
                 if (score > bestScore) {
@@ -469,32 +449,40 @@ class ScreenRecordService : Service() {
 
             if (bestScore < confThreshold) continue
 
-            // Convert from model space to original capture space
-            val left = ((xc - bw / 2f) * modelSize - letterboxOffsetX) / letterboxScale
-            val top = ((yc - bh / 2f) * modelSize - letterboxOffsetY) / letterboxScale
-            val right = ((xc + bw / 2f) * modelSize - letterboxOffsetX) / letterboxScale
-            val bottom = ((yc + bh / 2f) * modelSize - letterboxOffsetY) / letterboxScale
+            val xc_model = xc_norm * modelSize
+            val yc_model = yc_norm * modelSize
+            val w_model = w_norm * modelSize
+            val h_model = h_norm * modelSize
 
-            val l = left.coerceIn(0f, imageW.toFloat())
-            val t = top.coerceIn(0f, imageH.toFloat())
-            val r = right.coerceIn(0f, imageW.toFloat())
-            val b = bottom.coerceIn(0f, imageH.toFloat())
+            val xc_scaled = xc_model - letterboxOffsetX
+            val yc_scaled = yc_model - letterboxOffsetY
 
-            val boxWidth = r - l
-            val boxHeight = b - t
+            val xc_original = xc_scaled / letterboxScale
+            val yc_original = yc_scaled / letterboxScale
+            val w_original = w_model / letterboxScale
+            val h_original = h_model / letterboxScale
+
+            val left = (xc_original - w_original / 2f).coerceIn(0f, imageW.toFloat())
+            val top = (yc_original - h_original / 2f).coerceIn(0f, imageH.toFloat())
+            val right = (xc_original + w_original / 2f).coerceIn(0f, imageW.toFloat())
+            val bottom = (yc_original + h_original / 2f).coerceIn(0f, imageH.toFloat())
+
+            val boxWidth = right - left
+            val boxHeight = bottom - top
+
             if (boxWidth < 15f || boxHeight < 15f) continue
-            if (boxWidth > imageW * 0.9f || boxHeight > imageH * 0.9f) continue
+            if (boxWidth > imageW * 0.95f || boxHeight > imageH * 0.95f) continue
 
             val labelNames = arrayOf("animals", "humps", "pedestrian", "pothole", "roadworks")
             val label = labelNames.getOrNull(bestClass) ?: "unknown"
 
-            rawDetections.add(Detection(RectF(l, t, r, b), label, bestScore))
+            rawDetections.add(Detection(RectF(left, top, right, bottom), label, bestScore))
         }
 
         val final = nonMaxSuppression(rawDetections, iouThreshold)
 
         if (final.isNotEmpty()) {
-            Log.d("ScreenRecordService", "✅ Detections: ${final.size} (from ${rawDetections.size} at ${(confThreshold * 100).toInt()}% conf)")
+            Log.d("ScreenRecordService", "✅ Detections: ${final.size} (from ${rawDetections.size})")
         }
 
         return final
@@ -521,13 +509,7 @@ class ScreenRecordService : Service() {
         while (sorted.isNotEmpty()) {
             val a = sorted.removeAt(0)
             keep.add(a)
-            val it = sorted.iterator()
-            while (it.hasNext()) {
-                val b = it.next()
-                if (iou(a.box, b.box) > iouThreshold) {
-                    it.remove()
-                }
-            }
+            sorted.removeAll { b -> iou(a.box, b.box) > iouThreshold }
         }
         return keep
     }
@@ -640,26 +622,26 @@ class ScreenRecordService : Service() {
         private val boxPaint = Paint().apply {
             color = Color.RED
             style = Paint.Style.STROKE
-            strokeWidth = 6f
+            strokeWidth = 8f
             isAntiAlias = true
         }
 
         private val textPaint = Paint().apply {
             color = Color.WHITE
-            textSize = 36f
+            textSize = 42f
             style = Paint.Style.FILL
             isAntiAlias = true
             typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
         }
 
         private val bgPaint = Paint().apply {
-            color = Color.argb(180, 0, 0, 0)
+            color = Color.argb(200, 0, 0, 0)
             style = Paint.Style.FILL
         }
 
         private var dets: List<Detection> = emptyList()
-        private var captureW = 416
-        private var captureH = 416
+        private var captureW = 1080
+        private var captureH = 1920
 
         fun setDetections(list: List<Detection>, capWidth: Int, capHeight: Int) {
             dets = list
@@ -671,35 +653,30 @@ class ScreenRecordService : Service() {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
 
-            val sx = width.toFloat() / captureW.toFloat()
-            val sy = height.toFloat() / captureH.toFloat()
+            if (dets.isEmpty()) return
 
-            for (d in dets) {
-                canvas.drawRect(
-                    d.box.left * sx,
-                    d.box.top * sy,
-                    d.box.right * sx,
-                    d.box.bottom * sy,
-                    boxPaint
-                )
+            val scaleX = width.toFloat() / captureW.toFloat()
+            val scaleY = height.toFloat() / captureH.toFloat()
 
-                val label = "${d.label} ${String.format("%.0f%%", d.score * 100)}"
+            for (det in dets) {
+                val left = det.box.left * scaleX
+                val top = det.box.top * scaleY
+                val right = det.box.right * scaleX
+                val bottom = det.box.bottom * scaleY
+
+                canvas.drawRect(left, top, right, bottom, boxPaint)
+
+                val label = "${det.label} ${(det.score * 100).toInt()}%"
                 val textWidth = textPaint.measureText(label)
-                val textHeight = textPaint.textSize + 8f
+                val textHeight = textPaint.textSize + 12f
 
-                val rectLeft = d.box.left * sx
-                val rectTop = (d.box.top * sy - textHeight).coerceAtLeast(0f)
-                val rectRight = (rectLeft + textWidth + 16f).coerceAtMost(width.toFloat())
-                val rectBottom = d.box.top * sy
+                val rectLeft = left
+                val rectTop = (top - textHeight).coerceAtLeast(0f)
+                val rectRight = (left + textWidth + 20f).coerceAtMost(width.toFloat())
+                val rectBottom = top
 
                 canvas.drawRect(rectLeft, rectTop, rectRight, rectBottom, bgPaint)
-
-                canvas.drawText(
-                    label,
-                    rectLeft + 8f,
-                    rectBottom - 8f,
-                    textPaint
-                )
+                canvas.drawText(label, left + 10f, top - 10f, textPaint)
             }
         }
     }

@@ -12,7 +12,6 @@ import android.os.*
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.util.Log
-import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
@@ -70,7 +69,7 @@ class ScreenRecordService : Service() {
     private var lastAnnounceTime = 0L
     private val announceDebounceMs = 3000L
 
-    // ✅ NEW: Track capture dimensions for proper scaling
+    // Capture dimensions for proper scaling
     private var captureWidth = 416
     private var captureHeight = 416
     private var letterboxOffsetX = 0f
@@ -78,6 +77,9 @@ class ScreenRecordService : Service() {
     private var letterboxScale = 1f
 
     private var reusableBitmap: Bitmap? = null
+
+    // ✅ NEW: User-adjustable confidence threshold
+    private var userConfidenceThreshold = 0.45f  // Default from training
 
     override fun onCreate() {
         super.onCreate()
@@ -112,9 +114,17 @@ class ScreenRecordService : Service() {
                         return START_NOT_STICKY
                     }
 
+                    // ✅ Get user settings from config
                     isVoiceAlertEnabled = config.isVoiceAlertEnabled
-                    loadModel(config.modelFileName)
+                    userConfidenceThreshold = config.confidenceThreshold
 
+                    Log.d("ScreenRecordService", "=".repeat(60))
+                    Log.d("ScreenRecordService", "🎯 USER SETTINGS")
+                    Log.d("ScreenRecordService", "Confidence Threshold: ${(userConfidenceThreshold * 100).toInt()}%")
+                    Log.d("ScreenRecordService", "Voice Alerts: ${if (isVoiceAlertEnabled) "ON" else "OFF"}")
+                    Log.d("ScreenRecordService", "=".repeat(60))
+
+                    loadModel(config.modelFileName)
                     startForegroundServiceWithNotification()
                     startProjectionAndDetection(config)
                     isServiceRunning.value = true
@@ -167,12 +177,11 @@ class ScreenRecordService : Service() {
                 val outputTensor = tflite?.getOutputTensor(0)
 
                 Log.d("ScreenRecordService", "=".repeat(60))
-                Log.d("ScreenRecordService", "📐 MODEL LOADED: $modelFileName")
+                Log.d("ScreenRecordService", "📐 MODEL LOADED")
+                Log.d("ScreenRecordService", "File: $modelFileName")
                 Log.d("ScreenRecordService", "Input: ${inputTensor?.shape()?.contentToString()}")
                 Log.d("ScreenRecordService", "Output: ${outputTensor?.shape()?.contentToString()}")
                 Log.d("ScreenRecordService", "=".repeat(60))
-
-                Log.d("ScreenRecordService", "✅ Model loaded successfully")
             } ?: run {
                 Log.e("ScreenRecordService", "❌ Model file not found: $modelFileName")
             }
@@ -195,7 +204,7 @@ class ScreenRecordService : Service() {
 
         mediaProjection = projectionManager?.getMediaProjection(config.resultCode, config.data)
 
-        // ✅ FIXED: Calculate capture dimensions based on screen aspect ratio
+        // Calculate capture dimensions based on screen aspect ratio
         val metrics = resources.displayMetrics
         val screenWidth = metrics.widthPixels
         val screenHeight = metrics.heightPixels
@@ -204,18 +213,16 @@ class ScreenRecordService : Service() {
         val aspectRatio = screenWidth.toFloat() / screenHeight.toFloat()
 
         if (screenWidth > screenHeight) {
-            // Landscape
             captureWidth = targetSize
             captureHeight = (targetSize / aspectRatio).toInt()
         } else {
-            // Portrait (most common)
             captureHeight = targetSize
             captureWidth = (targetSize * aspectRatio).toInt()
         }
 
         Log.d("ScreenRecordService", "📱 Screen: ${screenWidth}x${screenHeight}")
         Log.d("ScreenRecordService", "📷 Capture: ${captureWidth}x${captureHeight}")
-        Log.d("ScreenRecordService", "📐 Aspect Ratio: $aspectRatio")
+        Log.d("ScreenRecordService", "📐 Aspect: ${"%.2f".format(aspectRatio)}")
 
         projectionCallback = object : MediaProjection.Callback() {
             override fun onStop() {
@@ -229,7 +236,7 @@ class ScreenRecordService : Service() {
         imageReader = ImageReader.newInstance(captureWidth, captureHeight, PixelFormat.RGBA_8888, 2)
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "DetectionDisplay",
-            captureWidth, captureHeight,  // ✅ Use calculated dimensions
+            captureWidth, captureHeight,
             resources.displayMetrics.densityDpi,
             0,
             imageReader?.surface, null, null
@@ -374,7 +381,6 @@ class ScreenRecordService : Service() {
         }
     }
 
-    // ✅ FIXED: Letterbox resize to preserve aspect ratio
     private fun prepareInput(bitmap: Bitmap): Array<Array<Array<FloatArray>>> {
         val modelInputSize = 416
         val inputBmp = letterboxResize(bitmap, modelInputSize, modelInputSize)
@@ -393,35 +399,27 @@ class ScreenRecordService : Service() {
         return input
     }
 
-    // ✅ NEW: Letterbox resize function to preserve aspect ratio
     private fun letterboxResize(bitmap: Bitmap, targetW: Int, targetH: Int): Bitmap {
         val srcW = bitmap.width
         val srcH = bitmap.height
 
-        // Calculate scale to fit within target while preserving aspect ratio
         val scale = minOf(targetW.toFloat() / srcW, targetH.toFloat() / srcH)
         val scaledW = (srcW * scale).toInt()
         val scaledH = (srcH * scale).toInt()
 
-        // Scale the image
         val scaled = Bitmap.createScaledBitmap(bitmap, scaledW, scaledH, true)
 
-        // Create letterboxed image with gray padding
         val result = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(result)
-        canvas.drawColor(Color.rgb(114, 114, 114)) // Gray padding
+        canvas.drawColor(Color.rgb(114, 114, 114))
 
-        // Center the scaled image
         val left = (targetW - scaledW) / 2f
         val top = (targetH - scaledH) / 2f
         canvas.drawBitmap(scaled, left, top, null)
 
-        // Store letterbox parameters for coordinate transformation
         letterboxOffsetX = left
         letterboxOffsetY = top
         letterboxScale = scale
-
-        Log.d("ScreenRecordService", "📐 Letterbox: offset=($left, $top), scale=$scale")
 
         scaled.recycle()
         return result
@@ -437,15 +435,15 @@ class ScreenRecordService : Service() {
         return output
     }
 
-    // ✅ FIXED: Account for letterboxing when converting coordinates
+    // FIXED: Use user's confidence threshold
     private fun parseModelOutput(
         output: Array<Array<FloatArray>>,
         imageW: Int,
-        imageH: Int,
-        confThreshold: Float = 0.50f,
-        iouThreshold: Float = 0.50f
+        imageH: Int
     ): List<Detection> {
 
+        val confThreshold = userConfidenceThreshold  // ✅ Use user's setting
+        val iouThreshold = 0.50f  // Keep IoU fixed
         val preds = output[0]
         val numBoxes = 3549
         val rawDetections = ArrayList<Detection>(64)
@@ -471,8 +469,7 @@ class ScreenRecordService : Service() {
 
             if (bestScore < confThreshold) continue
 
-            // ✅ FIXED: Convert from model space to original capture space
-            // accounting for letterboxing
+            // Convert from model space to original capture space
             val left = ((xc - bw / 2f) * modelSize - letterboxOffsetX) / letterboxScale
             val top = ((yc - bh / 2f) * modelSize - letterboxOffsetY) / letterboxScale
             val right = ((xc + bw / 2f) * modelSize - letterboxOffsetX) / letterboxScale
@@ -497,7 +494,7 @@ class ScreenRecordService : Service() {
         val final = nonMaxSuppression(rawDetections, iouThreshold)
 
         if (final.isNotEmpty()) {
-            Log.d("ScreenRecordService", "✅ Detections: ${final.size} (filtered from ${rawDetections.size})")
+            Log.d("ScreenRecordService", "✅ Detections: ${final.size} (from ${rawDetections.size} at ${(confThreshold * 100).toInt()}% conf)")
         }
 
         return final
@@ -569,7 +566,6 @@ class ScreenRecordService : Service() {
         try {
             windowManager?.addView(overlayView, params)
             overlayAdded = true
-            Log.d("ScreenRecordService", "✅ Overlay added successfully")
         } catch (e: Exception) {
             Log.w("ScreenRecordService", "Overlay add failed: ${e.message}")
         }
@@ -599,7 +595,7 @@ class ScreenRecordService : Service() {
         val stopPending = PendingIntent.getService(this, 0, stopIntent, PendingIntent.FLAG_IMMUTABLE)
         val notif = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("FocusNet Detection Active")
-            .setContentText("Tap to stop")
+            .setContentText("Confidence: ${(userConfidenceThreshold * 100).toInt()}%")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPending)
             .setOngoing(true)
@@ -639,7 +635,6 @@ class ScreenRecordService : Service() {
         Log.d("ScreenRecordService", "🔊 Announced: $message")
     }
 
-    // ✅ FIXED: Overlay now properly scales from capture dimensions to screen
     class OverlayView(ctx: Context) : View(ctx) {
 
         private val boxPaint = Paint().apply {
@@ -676,14 +671,10 @@ class ScreenRecordService : Service() {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
 
-            // ✅ FIXED: Scale from capture dimensions to actual screen dimensions
             val sx = width.toFloat() / captureW.toFloat()
             val sy = height.toFloat() / captureH.toFloat()
 
-            Log.d("OverlayView", "Drawing ${dets.size} detections, scale=($sx, $sy)")
-
             for (d in dets) {
-                // Draw box
                 canvas.drawRect(
                     d.box.left * sx,
                     d.box.top * sy,
@@ -692,7 +683,6 @@ class ScreenRecordService : Service() {
                     boxPaint
                 )
 
-                // Draw label with background
                 val label = "${d.label} ${String.format("%.0f%%", d.score * 100)}"
                 val textWidth = textPaint.measureText(label)
                 val textHeight = textPaint.textSize + 8f

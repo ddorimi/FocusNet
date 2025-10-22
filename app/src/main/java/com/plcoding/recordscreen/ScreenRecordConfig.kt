@@ -6,27 +6,27 @@ import android.os.Parcel
 import android.os.Parcelable
 
 /**
- * Simple Parcelable holder for MediaProjection config.
- * It passes the permission result code and data Intent
- * from MainActivity to ScreenRecordService.
+ * Configuration for screen recording and detection service
  */
 data class ScreenRecordConfig(
     val resultCode: Int,
     val data: Intent,
     val modelFileName: String = "focusnet.tflite",
-    val isVoiceAlertEnabled: Boolean = true
+    val isVoiceAlertEnabled: Boolean = true,
+    val confidenceThreshold: Float = 0.50f
 ) : Parcelable {
 
     constructor(parcel: Parcel) : this(
-        parcel.readInt(),
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        resultCode = parcel.readInt(),
+        data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             parcel.readParcelable(Intent::class.java.classLoader, Intent::class.java)!!
         } else {
             @Suppress("DEPRECATION")
             parcel.readParcelable(Intent::class.java.classLoader)!!
         },
-        parcel.readString() ?: "focusnet.tflite",
-        parcel.readByte() != 0.toByte()
+        modelFileName = parcel.readString() ?: "focusnet.tflite",
+        isVoiceAlertEnabled = parcel.readByte() != 0.toByte(),
+        confidenceThreshold = parcel.readFloat()
     )
 
     override fun writeToParcel(parcel: Parcel, flags: Int) {
@@ -34,6 +34,7 @@ data class ScreenRecordConfig(
         parcel.writeParcelable(data, flags)
         parcel.writeString(modelFileName)
         parcel.writeByte(if (isVoiceAlertEnabled) 1 else 0)
+        parcel.writeFloat(confidenceThreshold)
     }
 
     override fun describeContents(): Int = 0

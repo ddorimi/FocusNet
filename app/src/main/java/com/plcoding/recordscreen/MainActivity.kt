@@ -191,6 +191,7 @@ fun HazardMenuScreen(
     val isServiceRunning by ScreenRecordService.isServiceRunning.collectAsStateWithLifecycle()
 
     var isVoiceAlertEnabled by remember { mutableStateOf(true) }
+    var confidenceThreshold by remember { mutableStateOf(0.50f) }  // ✅ NEW: Threshold state
 
     var hasNotificationPermission by remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -211,7 +212,8 @@ fun HazardMenuScreen(
             resultCode = result.resultCode,
             data = intent,
             modelFileName = "focusnet.tflite",
-            isVoiceAlertEnabled = isVoiceAlertEnabled
+            isVoiceAlertEnabled = isVoiceAlertEnabled,
+            confidenceThreshold = confidenceThreshold  // ✅ NEW: Pass threshold
         )
         val serviceIntent = Intent(context, ScreenRecordService::class.java).apply {
             action = ScreenRecordService.START_RECORDING
@@ -287,9 +289,79 @@ fun HazardMenuScreen(
             items(hazards) { item -> HazardButton(item) }
         }
 
-        Spacer(modifier = Modifier.height(50.dp))
+        Spacer(modifier = Modifier.height(30.dp))
 
-        // ✅ REMOVED: Model selection dropdown - no longer needed
+        // ✅ NEW: Confidence Threshold Slider
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF3D5A80))
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Confidence Threshold",
+                        fontSize = 14.sp,
+                        color = Color.White,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "${(confidenceThreshold * 100).toInt()}%",
+                        fontSize = 16.sp,
+                        color = Color(0xFF4CAF50),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Slider(
+                    value = confidenceThreshold,
+                    onValueChange = { confidenceThreshold = it },
+                    valueRange = 0.25f..0.85f,
+                    steps = 11,  // 25%, 30%, 35%, ..., 85%
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color.White,
+                        activeTrackColor = Color(0xFF4CAF50),
+                        inactiveTrackColor = Color(0xFF757575)
+                    )
+                )
+
+                // Helper text
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = when {
+                            confidenceThreshold < 0.35f -> "⚡ Max Sensitivity"
+                            confidenceThreshold < 0.55f -> "⚖️ Balanced"
+                            else -> "🎯 High Precision"
+                        },
+                        fontSize = 12.sp,
+                        color = Color(0xFFB0BEC5)
+                    )
+                    Text(
+                        text = when {
+                            confidenceThreshold < 0.35f -> "More detections"
+                            confidenceThreshold < 0.55f -> "Recommended"
+                            else -> "Fewer false alarms"
+                        },
+                        fontSize = 12.sp,
+                        color = Color(0xFFB0BEC5)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
 
         // Voice Alert Toggle
         Box(

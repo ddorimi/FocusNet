@@ -191,7 +191,8 @@ fun HazardMenuScreen(
     val isServiceRunning by ScreenRecordService.isServiceRunning.collectAsStateWithLifecycle()
 
     var isVoiceAlertEnabled by remember { mutableStateOf(true) }
-    var confidenceThreshold by remember { mutableStateOf(0.50f) }  // ✅ NEW: Threshold state
+    var confidenceThreshold by remember { mutableStateOf(0.50f) }
+    var selectedModel by remember { mutableStateOf(ModelType.FOCUSNET) }  // ✅ NEW
 
     var hasNotificationPermission by remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -208,12 +209,20 @@ fun HazardMenuScreen(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         val intent = result.data ?: return@rememberLauncherForActivityResult
+
+        // ✅ Determine model file based on selection
+        val modelFileName = when (selectedModel) {
+            ModelType.FOCUSNET -> "focusnet.tflite"
+            ModelType.BASELINE -> "baseline.tflite"
+        }
+
         val config = ScreenRecordConfig(
             resultCode = result.resultCode,
             data = intent,
-            modelFileName = "focusnet.tflite",
+            modelFileName = modelFileName,
+            modelType = selectedModel,  // ✅ NEW
             isVoiceAlertEnabled = isVoiceAlertEnabled,
-            confidenceThreshold = confidenceThreshold  // ✅ NEW: Pass threshold
+            confidenceThreshold = confidenceThreshold
         )
         val serviceIntent = Intent(context, ScreenRecordService::class.java).apply {
             action = ScreenRecordService.START_RECORDING
@@ -291,7 +300,95 @@ fun HazardMenuScreen(
 
         Spacer(modifier = Modifier.height(30.dp))
 
-        // ✅ NEW: Confidence Threshold Slider
+        // ✅ NEW: Model Selection Card
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF3D5A80))
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = "Select Model",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+
+                // FocusNet Option
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { selectedModel = ModelType.FOCUSNET }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = selectedModel == ModelType.FOCUSNET,
+                        onClick = { selectedModel = ModelType.FOCUSNET },
+                        colors = RadioButtonDefaults.colors(
+                            selectedColor = Color(0xFF4CAF50),
+                            unselectedColor = Color.White
+                        )
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "FocusNet (Recommended)",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Enhanced for nighttime • 79.9% accuracy",
+                            fontSize = 12.sp,
+                            color = Color(0xFFB0BEC5)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Baseline Option
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { selectedModel = ModelType.BASELINE }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = selectedModel == ModelType.BASELINE,
+                        onClick = { selectedModel = ModelType.BASELINE },
+                        colors = RadioButtonDefaults.colors(
+                            selectedColor = Color(0xFF4CAF50),
+                            unselectedColor = Color.White
+                        )
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Baseline SSD",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Standard model • 66% accuracy",
+                            fontSize = 12.sp,
+                            color = Color(0xFFB0BEC5)
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Confidence Threshold Slider
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -326,7 +423,7 @@ fun HazardMenuScreen(
                     value = confidenceThreshold,
                     onValueChange = { confidenceThreshold = it },
                     valueRange = 0.25f..0.85f,
-                    steps = 11,  // 25%, 30%, 35%, ..., 85%
+                    steps = 11,
                     colors = SliderDefaults.colors(
                         thumbColor = Color.White,
                         activeTrackColor = Color(0xFF4CAF50),
@@ -334,7 +431,6 @@ fun HazardMenuScreen(
                     )
                 )
 
-                // Helper text
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -469,6 +565,7 @@ fun HazardMenuScreen(
         }
     }
 }
+
 // ==================== ABOUT US SCREEN ====================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

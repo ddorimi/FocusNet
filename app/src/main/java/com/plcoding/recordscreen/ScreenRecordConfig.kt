@@ -5,13 +5,11 @@ import android.os.Build
 import android.os.Parcel
 import android.os.Parcelable
 
-/**
- * Configuration for screen recording and detection service
- */
 data class ScreenRecordConfig(
     val resultCode: Int,
     val data: Intent,
-    val modelFileName: String = "focusnet.tflite",
+    val modelFileName: String = "focusnet.tflite",  // ✅ Default FocusNet
+    val modelType: ModelType = ModelType.FOCUSNET,   // ✅ NEW: Model type
     val isVoiceAlertEnabled: Boolean = true,
     val confidenceThreshold: Float = 0.50f
 ) : Parcelable {
@@ -25,6 +23,7 @@ data class ScreenRecordConfig(
             parcel.readParcelable(Intent::class.java.classLoader)!!
         },
         modelFileName = parcel.readString() ?: "focusnet.tflite",
+        modelType = ModelType.valueOf(parcel.readString() ?: "FOCUSNET"),  // ✅ NEW
         isVoiceAlertEnabled = parcel.readByte() != 0.toByte(),
         confidenceThreshold = parcel.readFloat()
     )
@@ -33,6 +32,7 @@ data class ScreenRecordConfig(
         parcel.writeInt(resultCode)
         parcel.writeParcelable(data, flags)
         parcel.writeString(modelFileName)
+        parcel.writeString(modelType.name)  // ✅ NEW
         parcel.writeByte(if (isVoiceAlertEnabled) 1 else 0)
         parcel.writeFloat(confidenceThreshold)
     }
@@ -48,4 +48,9 @@ data class ScreenRecordConfig(
             return arrayOfNulls(size)
         }
     }
+}
+
+enum class ModelType {
+    FOCUSNET,
+    BASELINE
 }

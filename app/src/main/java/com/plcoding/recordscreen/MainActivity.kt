@@ -46,6 +46,8 @@ import com.plcoding.recordscreen.ScreenRecordService.Companion.START_RECORDING
 import com.plcoding.recordscreen.ScreenRecordService.Companion.STOP_RECORDING
 import com.plcoding.recordscreen.ui.theme.CoralRed
 import com.plcoding.recordscreen.ui.theme.RecordScreenTheme
+import androidx.compose.foundation.shape.CircleShape
+
 
 
 class MainActivity : ComponentActivity() {
@@ -189,10 +191,10 @@ fun HazardMenuScreen(
 ) {
     val context = LocalContext.current
     val isServiceRunning by ScreenRecordService.isServiceRunning.collectAsStateWithLifecycle()
-
     var isVoiceAlertEnabled by remember { mutableStateOf(true) }
     var confidenceThreshold by remember { mutableStateOf(0.50f) }
-    var selectedModel by remember { mutableStateOf(ModelType.FOCUSNET) }  // ✅ NEW
+    var selectedModel by remember { mutableStateOf(ModelType.FOCUSNET) }
+    var isDropdownExpanded by remember { mutableStateOf(false) }
 
     var hasNotificationPermission by remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -210,7 +212,6 @@ fun HazardMenuScreen(
     ) { result ->
         val intent = result.data ?: return@rememberLauncherForActivityResult
 
-        // ✅ Determine model file based on selection
         val modelFileName = when (selectedModel) {
             ModelType.FOCUSNET -> "focusnet.tflite"
             ModelType.BASELINE -> "baseline.tflite"
@@ -220,10 +221,11 @@ fun HazardMenuScreen(
             resultCode = result.resultCode,
             data = intent,
             modelFileName = modelFileName,
-            modelType = selectedModel,  // ✅ NEW
+            modelType = selectedModel,
             isVoiceAlertEnabled = isVoiceAlertEnabled,
             confidenceThreshold = confidenceThreshold
         )
+
         val serviceIntent = Intent(context, ScreenRecordService::class.java).apply {
             action = ScreenRecordService.START_RECORDING
             putExtra(ScreenRecordService.KEY_RECORDING_CONFIG, config)
@@ -254,8 +256,8 @@ fun HazardMenuScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF2D4059))
-            .padding(20.dp)
-            .systemBarsPadding(),
+            .systemBarsPadding()
+            .padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Back + Title
@@ -277,9 +279,9 @@ fun HazardMenuScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-        // Hazard Grid
+        // Hazard Grid - Compact
         val hazards = listOf(
             HazardItem(R.drawable.pedestrian_logo, "Pedestrians"),
             HazardItem(R.drawable.potholeshumps_logo, "Potholes / Humps"),
@@ -287,208 +289,169 @@ fun HazardMenuScreen(
             HazardItem(R.drawable.roadworks_logo, "Road Works")
         )
 
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(2),
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(300.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
+                .padding(horizontal = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            items(hazards) { item -> HazardButton(item) }
-        }
-
-        Spacer(modifier = Modifier.height(30.dp))
-
-        // ✅ NEW: Model Selection Card
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF3D5A80))
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp)
-            ) {
-                Text(
-                    text = "Select Model",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    modifier = Modifier.padding(bottom = 12.dp)
-                )
-
-                // FocusNet Option
+            hazards.chunked(2).forEach { rowItems ->
                 Row(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { selectedModel = ModelType.FOCUSNET }
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(20.dp)
                 ) {
-                    RadioButton(
-                        selected = selectedModel == ModelType.FOCUSNET,
-                        onClick = { selectedModel = ModelType.FOCUSNET },
-                        colors = RadioButtonDefaults.colors(
-                            selectedColor = Color(0xFF4CAF50),
-                            unselectedColor = Color.White
-                        )
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "FocusNet (Recommended)",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White
-                        )
-                        Text(
-                            text = "Enhanced for nighttime • 79.9% accuracy",
-                            fontSize = 12.sp,
-                            color = Color(0xFFB0BEC5)
-                        )
+                    rowItems.forEach { item ->
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .aspectRatio(1f), // ✅ keeps each cell square
+                            contentAlignment = Alignment.Center
+                        ) {
+                            HazardButton(item)
+                        }
                     }
-                }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Baseline Option
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { selectedModel = ModelType.BASELINE }
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    RadioButton(
-                        selected = selectedModel == ModelType.BASELINE,
-                        onClick = { selectedModel = ModelType.BASELINE },
-                        colors = RadioButtonDefaults.colors(
-                            selectedColor = Color(0xFF4CAF50),
-                            unselectedColor = Color.White
-                        )
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "Baseline SSD",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White
-                        )
-                        Text(
-                            text = "Standard model • 66% accuracy",
-                            fontSize = 12.sp,
-                            color = Color(0xFFB0BEC5)
+                    // ✅ if the row only has one item, keep layout symmetrical
+                    if (rowItems.size == 1) {
+                        Spacer(
+                            modifier = Modifier
+                                .weight(1f)
+                                .aspectRatio(1f)
                         )
                     }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        // Confidence Threshold Slider
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF3D5A80))
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Confidence Threshold",
-                        fontSize = 14.sp,
-                        color = Color.White,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        text = "${(confidenceThreshold * 100).toInt()}%",
-                        fontSize = 16.sp,
-                        color = Color(0xFF4CAF50),
-                        fontWeight = FontWeight.Bold
-                    )
-                }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Slider(
-                    value = confidenceThreshold,
-                    onValueChange = { confidenceThreshold = it },
-                    valueRange = 0.25f..0.85f,
-                    steps = 11,
-                    colors = SliderDefaults.colors(
-                        thumbColor = Color.White,
-                        activeTrackColor = Color(0xFF4CAF50),
-                        inactiveTrackColor = Color(0xFF757575)
-                    )
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = when {
-                            confidenceThreshold < 0.35f -> "⚡ Max Sensitivity"
-                            confidenceThreshold < 0.55f -> "⚖️ Balanced"
-                            else -> "🎯 High Precision"
-                        },
-                        fontSize = 12.sp,
-                        color = Color(0xFFB0BEC5)
-                    )
-                    Text(
-                        text = when {
-                            confidenceThreshold < 0.35f -> "More detections"
-                            confidenceThreshold < 0.55f -> "Recommended"
-                            else -> "Fewer false alarms"
-                        },
-                        fontSize = 12.sp,
-                        color = Color(0xFFB0BEC5)
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // Voice Alert Toggle
+        // Model Selection Dropdown - Simplified
         Box(
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.CenterStart
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF3D5A80), RoundedCornerShape(8.dp))
+                .clickable { isDropdownExpanded = true }
+                .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             Row(
-                modifier = Modifier
-                    .padding(vertical = 10.dp)
-                    .padding(start = 40.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Switch(
-                    checked = isVoiceAlertEnabled,
-                    onCheckedChange = { isVoiceAlertEnabled = it },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = Color(0xFF4CAF50),
-                        uncheckedThumbColor = Color.White,
-                        uncheckedTrackColor = Color(0xFF757575)
-                    )
-                )
-
                 Text(
-                    text = "Voice Alert",
-                    fontSize = 16.sp,
+                    text = when (selectedModel) {
+                        ModelType.FOCUSNET -> "Model: FocusNet"
+                        ModelType.BASELINE -> "Model: Baseline"
+                    },
+                    fontSize = 14.sp,
                     color = Color.White,
                     fontWeight = FontWeight.Medium
                 )
+
             }
+
+            DropdownMenu(
+                expanded = isDropdownExpanded,
+                onDismissRequest = { isDropdownExpanded = false },
+                modifier = Modifier
+                    .fillMaxWidth(0.85f)
+                    .background(Color(0xFF2D4059))
+            ) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = "FocusNet (79.9%)",
+                            color = Color.White
+                        )
+                    },
+                    onClick = {
+                        selectedModel = ModelType.FOCUSNET
+                        isDropdownExpanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = "Baseline (66%)",
+                            color = Color.White
+                        )
+                    },
+                    onClick = {
+                        selectedModel = ModelType.BASELINE
+                        isDropdownExpanded = false
+                    }
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Confidence Threshold - Compact
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF3D5A80), RoundedCornerShape(8.dp))
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Confidence",
+                fontSize = 14.sp,
+                color = Color.White,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                text = "${(confidenceThreshold * 100).toInt()}%",
+                fontSize = 14.sp,
+                color = Color(0xFF4CAF50),
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Slider(
+            value = confidenceThreshold,
+            onValueChange = { confidenceThreshold = it },
+            valueRange = 0.25f..0.85f,
+            steps = 11,
+            modifier = Modifier.padding(horizontal = 8.dp),
+            colors = SliderDefaults.colors(
+                thumbColor = Color.White,
+                activeTrackColor = Color(0xFF4CAF50),
+                inactiveTrackColor = Color(0xFF757575)
+            )
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Voice Alert Toggle - Compact
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF3D5A80), RoundedCornerShape(8.dp))
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "Voice Alert",
+                fontSize = 14.sp,
+                color = Color.White,
+                fontWeight = FontWeight.Medium
+            )
+            Switch(
+                checked = isVoiceAlertEnabled,
+                onCheckedChange = { isVoiceAlertEnabled = it },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = Color(0xFF4CAF50),
+                    uncheckedThumbColor = Color.White,
+                    uncheckedTrackColor = Color(0xFF757575)
+                )
+            )
         }
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -528,9 +491,8 @@ fun HazardMenuScreen(
             elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp),
             shape = RoundedCornerShape(50.dp),
             modifier = Modifier
-                .padding(horizontal = 40.dp)
-                .height(55.dp)
                 .fillMaxWidth(0.7f)
+                .height(50.dp)
         ) {
             Text(
                 text = if (isServiceRunning) "Stop Detecting" else "Detect Now",
@@ -544,7 +506,7 @@ fun HazardMenuScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 20.dp),
+                .padding(bottom = 10.dp),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             Text(
@@ -554,7 +516,6 @@ fun HazardMenuScreen(
                 textDecoration = TextDecoration.Underline,
                 modifier = Modifier.clickable { onNavigateToAboutUs() }
             )
-
             Text(
                 text = "Dev Mode",
                 fontSize = 14.sp,
@@ -838,7 +799,7 @@ fun PerformanceMetricCard(title: String, value: String, color: Color) {
                 color = Color.White,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             Text(
                 text = value,
                 fontSize = 22.sp,
@@ -923,14 +884,14 @@ fun HazardButton(item: HazardItem) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
-                .size(100.dp)
-                .background(Color(0xFFD9D9D9), shape = androidx.compose.foundation.shape.CircleShape),
+                .size(90.dp)
+                .background(Color(0xFFD9D9D9), shape = CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Image(
                 painter = painterResource(id = item.imageRes),
                 contentDescription = item.label,
-                modifier = Modifier.size(60.dp)
+                modifier = Modifier.size(45.dp)
             )
         }
         Spacer(modifier = Modifier.height(10.dp))

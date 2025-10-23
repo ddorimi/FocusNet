@@ -621,19 +621,7 @@ fun DevModeScreen(onBack: () -> Unit) {
     var debugMode by remember { mutableStateOf(false) }
     var loggingEnabled by remember { mutableStateOf(true) }
 
-    // --- Hardcoded Model Comparison Data (as per SOP) ---
-    val modelComparison = remember {
-        ModelComparison(
-            ssdRecall = 0.39f,
-            ssdPrecision = 0.66f,
-            ssdF1Score = 0.48f,
-            ssdAccuracy = 0.66f,
-            focusNetRecall = 0.66f,
-            focusNetPrecision = 0.84f,
-            focusNetF1Score = 0.73f,
-            focusNetAccuracy = 0.84f
-        )
-    }
+
 
     Scaffold(
         topBar = {
@@ -721,27 +709,6 @@ fun DevModeScreen(onBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // --- Model Comparison Section ---
-            Text(
-                text = "Model Comparison (FocusNet vs. SSD)",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF3E5470))
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    ComparisonRow("Recall", modelComparison.ssdRecall, modelComparison.focusNetRecall)
-                    ComparisonRow("Precision", modelComparison.ssdPrecision, modelComparison.focusNetPrecision)
-                    ComparisonRow("F1-Score", modelComparison.ssdF1Score, modelComparison.focusNetF1Score)
-                    ComparisonRow("Overall Accuracy", modelComparison.ssdAccuracy, modelComparison.focusNetAccuracy)
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
 
             // --- Hazard Statistics ---
             Text(
@@ -753,7 +720,7 @@ fun DevModeScreen(onBack: () -> Unit) {
             )
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
-                modifier = Modifier.height(240.dp),
+                modifier = Modifier.height(380.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -764,7 +731,7 @@ fun DevModeScreen(onBack: () -> Unit) {
                 item { HazardStatsCard("Road Works", hazardStats.roadWorks, Color(0xFFFF5722)) }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(35.dp))
 
         }
     }

@@ -14,7 +14,7 @@
 
 # Uncomment this to preserve the line number information for
 # debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+-keepattributes SourceFile,LineNumberTable
 
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
@@ -24,66 +24,94 @@
 # Keep TensorFlow Lite classes
 -keep class org.tensorflow.lite.** { *; }
 -keep interface org.tensorflow.lite.** { *; }
+-keepclassmembers class org.tensorflow.lite.** { *; }
+
+# Keep TensorFlow classes
 -keep class org.tensorflow.** { *; }
 
-# Keep native methods
+# Keep native methods for TFLite
 -keepclasseswithmembernames class * {
     native <methods>;
 }
 
+# Prevent obfuscation of TFLite model files
+-keepclassmembers class * {
+    @org.tensorflow.lite.annotations.UsedByGeneratedCode *;
+}
+
 # ==================== MODEL CLASSES ====================
-# Keep your Detection and metric classes
+# ✅ FIXED: Detection is now inside ScreenRecordService
+-keep class com.plcoding.recordscreen.ScreenRecordService { *; }
 -keep class com.plcoding.recordscreen.ScreenRecordService$Detection { *; }
+-keep class com.plcoding.recordscreen.ScreenRecordService$OverlayView { *; }
+
+# Keep data classes (outside main class)
 -keep class com.plcoding.recordscreen.PerformanceMetrics { *; }
 -keep class com.plcoding.recordscreen.HazardDetectionStats { *; }
 -keep class com.plcoding.recordscreen.ScreenRecordConfig { *; }
+-keep class com.plcoding.recordscreen.ModelComparison { *; }
 
-# ==================== COROUTINES ====================
+# ==================== KOTLIN & COROUTINES ====================
+# Keep Kotlin metadata
+-keepattributes *Annotation*
+-keep class kotlin.Metadata { *; }
+
+# Coroutines
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
 -keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
--keepclassmembers class kotlinx.coroutines.** {
+-keepclassmembernames class kotlinx.** {
     volatile <fields>;
 }
 
-# ==================== GENERAL ====================
+# Keep StateFlow and Flow
+-keep class kotlinx.coroutines.flow.** { *; }
+-keepclassmembers class kotlinx.coroutines.flow.StateFlow { *; }
+
+# ==================== ANDROID COMPONENTS ====================
 # Keep Parcelable implementations
 -keep class * implements android.os.Parcelable {
     public static final android.os.Parcelable$Creator *;
 }
 
-# Keep service classes
--keep class com.plcoding.recordscreen.ScreenRecordService { *; }
+# Keep Service classes
+-keep public class * extends android.app.Service
 
-# Suppress warnings
+# Keep Views
+-keep public class * extends android.view.View {
+    public <init>(android.content.Context);
+    public <init>(android.content.Context, android.util.AttributeSet);
+    public <init>(android.content.Context, android.util.AttributeSet, int);
+}
+
+# ==================== COMPOSE ====================
+# Keep Compose classes
+-keep class androidx.compose.** { *; }
+-keep class androidx.compose.runtime.** { *; }
+-keep interface androidx.compose.** { *; }
+
+# Keep @Composable functions
+-keepclassmembers class * {
+    @androidx.compose.runtime.Composable *;
+}
+
+# ==================== SUPPRESS WARNINGS ====================
 -dontwarn org.tensorflow.lite.**
 -dontwarn com.google.android.gms.**
-```
+-dontwarn javax.annotation.**
+-dontwarn kotlinx.coroutines.**
 
----
+# ==================== OPTIMIZATION ====================
+# Don't optimize TFLite code (can cause issues)
+-keep,allowobfuscation,allowoptimization class org.tensorflow.lite.** { *; }
 
-## 📋 **What Changed**
+# General optimization settings
+-optimizationpasses 5
+-dontusemixedcaseclassnames
+-verbose
 
-✅ **Kept** all the original comments (the `#` lines at the top)
-✅ **Added** TensorFlow Lite protection rules
-✅ **Added** your app-specific class protection
-
----
-
-## 🎯 **Quick Action Steps**
-
-1. **Open** `app/proguard-rules.pro` in Android Studio
-2. **Copy** the entire code block above
-3. **Replace** everything in the file
-4. **Save** (Ctrl+S / Cmd+S)
-5. **Sync** Gradle
-
----
-
-## ✅ **Verification**
-
-After adding, your file structure should show:
-```
-app/
-├── build.gradle.kts
-├── proguard-rules.pro  ← Updated with new rules
-└── src/
+# ==================== DEBUGGING (Remove in production) ====================
+# Uncomment for debugging ProGuard issues
+# -printconfiguration proguard-config.txt
+# -printmapping proguard-mapping.txt
+# -printseeds proguard-seeds.txt
+# -printusage proguard-usage.txt

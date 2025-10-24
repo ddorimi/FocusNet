@@ -48,8 +48,6 @@ import com.plcoding.recordscreen.ui.theme.CoralRed
 import com.plcoding.recordscreen.ui.theme.RecordScreenTheme
 import androidx.compose.foundation.shape.CircleShape
 
-
-
 class MainActivity : ComponentActivity() {
     private val mediaProjectionManager by lazy {
         getSystemService<MediaProjectionManager>()!!

@@ -8,10 +8,10 @@ import android.os.Parcelable
 data class ScreenRecordConfig(
     val resultCode: Int,
     val data: Intent,
-    val modelFileName: String = "focusnet.tflite",  // ✅ Default FocusNet
-    val modelType: ModelType = ModelType.FOCUSNET,   // ✅ NEW: Model type
+    val modelFileName: String = "focusnet.tflite",
+    val modelType: ModelType = ModelType.FOCUSNET,
     val isVoiceAlertEnabled: Boolean = true,
-    val confidenceThreshold: Float = 0.50f
+    val confidenceThreshold: Float = 0.45f
 ) : Parcelable {
 
     constructor(parcel: Parcel) : this(
@@ -23,7 +23,7 @@ data class ScreenRecordConfig(
             parcel.readParcelable(Intent::class.java.classLoader)!!
         },
         modelFileName = parcel.readString() ?: "focusnet.tflite",
-        modelType = ModelType.valueOf(parcel.readString() ?: "FOCUSNET"),  // ✅ NEW
+        modelType = ModelType.valueOf(parcel.readString() ?: "FOCUSNET"),
         isVoiceAlertEnabled = parcel.readByte() != 0.toByte(),
         confidenceThreshold = parcel.readFloat()
     )
@@ -32,7 +32,7 @@ data class ScreenRecordConfig(
         parcel.writeInt(resultCode)
         parcel.writeParcelable(data, flags)
         parcel.writeString(modelFileName)
-        parcel.writeString(modelType.name)  // ✅ NEW
+        parcel.writeString(modelType.name)
         parcel.writeByte(if (isVoiceAlertEnabled) 1 else 0)
         parcel.writeFloat(confidenceThreshold)
     }

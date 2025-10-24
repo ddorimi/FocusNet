@@ -12,6 +12,7 @@ import android.os.*
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.util.Log
+import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
@@ -24,7 +25,6 @@ import java.io.FileInputStream
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import java.util.Locale
-import kotlin.math.sqrt
 
 class ScreenRecordService : Service() {
 
@@ -63,6 +63,7 @@ class ScreenRecordService : Service() {
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private var currentModelName: String? = null
+    private var currentModelType: ModelType = ModelType.FOCUSNET
     private var isVoiceAlertEnabled: Boolean = true
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
@@ -70,32 +71,44 @@ class ScreenRecordService : Service() {
     private var lastAnnounceTime = 0L
     private val announceDebounceMs = 3000L
 
-    // ✅ DASHCAM OPTIMIZED: Capture original screen dimensions
+    // ✅ DASHCAM OPTIMIZATION: Track all coordinate transformations
     private var captureWidth = 0
     private var captureHeight = 0
+    private var screenWidth = 0
+    private var screenHeight = 0
     private var letterboxOffsetX = 0f
     private var letterboxOffsetY = 0f
     private var letterboxScale = 1f
+    private var letterboxScaledWidth = 0
+    private var letterboxScaledHeight = 0
 
     private var reusableBitmap: Bitmap? = null
-    private var userConfidenceThreshold = 0.40f  // ✅ Lower for dashcam
+    private var userConfidenceThreshold = 0.45f
 
     override fun onCreate() {
         super.onCreate()
         projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
+        // Get screen dimensions once
+        val metrics = resources.displayMetrics
+        screenWidth = metrics.widthPixels
+        screenHeight = metrics.heightPixels
+
+        Log.d("FocusNet", "📱 Device Screen: ${screenWidth}x${screenHeight}")
+
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.US
                 isTtsReady = true
-                Log.d("FocusNet", "✅ TTS ready")
+                Log.d("FocusNet", "✅ TTS initialized")
+            } else {
+                Log.w("FocusNet", "⚠️ TTS failed")
             }
         }
 
         createNotificationChannel()
     }
-    private var currentModelType: ModelType = ModelType.FOCUSNET
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -108,19 +121,21 @@ class ScreenRecordService : Service() {
                 }
                 if (config != null) {
                     if (!canDrawOverlays()) {
+                        Log.e("FocusNet", "❌ No overlay permission")
                         stopSelf()
                         return START_NOT_STICKY
                     }
 
                     isVoiceAlertEnabled = config.isVoiceAlertEnabled
                     userConfidenceThreshold = config.confidenceThreshold
-                    currentModelType = config.modelType  // ✅ NEW
+                    currentModelType = config.modelType
 
-                    Log.d("FocusNet", "=".repeat(60))
-                    Log.d("FocusNet", "🎯 Model: ${config.modelType.name}")  // ✅ NEW
+                    Log.d("FocusNet", "=".repeat(70))
+                    Log.d("FocusNet", "🎯 Model: ${config.modelType.name}")
+                    Log.d("FocusNet", "🎯 File: ${config.modelFileName}")
                     Log.d("FocusNet", "🎯 Confidence: ${(userConfidenceThreshold * 100).toInt()}%")
                     Log.d("FocusNet", "🔊 Voice: ${if (isVoiceAlertEnabled) "ON" else "OFF"}")
-                    Log.d("FocusNet", "=".repeat(60))
+                    Log.d("FocusNet", "=".repeat(70))
 
                     loadModel(config.modelFileName)
                     startForegroundServiceWithNotification()
@@ -166,14 +181,22 @@ class ScreenRecordService : Service() {
             loadModelFile(modelFileName)?.let { buffer ->
                 val options = Interpreter.Options().apply {
                     setNumThreads(4)
-                    setUseNNAPI(false)
+                    setUseNNAPI(false) // Disable for consistency across devices
                 }
                 tflite = Interpreter(buffer, options)
                 currentModelName = modelFileName
-                Log.d("FocusNet", "✅ Model: $modelFileName")
+
+                val inputTensor = tflite?.getInputTensor(0)
+                val outputTensor = tflite?.getOutputTensor(0)
+
+                Log.d("FocusNet", "📐 Input: ${inputTensor?.shape()?.contentToString()}")
+                Log.d("FocusNet", "📐 Output: ${outputTensor?.shape()?.contentToString()}")
+                Log.d("FocusNet", "✅ Model loaded: $modelFileName")
+            } ?: run {
+                Log.e("FocusNet", "❌ Model file not found: $modelFileName")
             }
         } catch (e: Exception) {
-            Log.e("FocusNet", "❌ Model error: ${e.message}")
+            Log.e("FocusNet", "❌ Model load error: ${e.message}", e)
         }
     }
 
@@ -191,34 +214,47 @@ class ScreenRecordService : Service() {
 
         mediaProjection = projectionManager?.getMediaProjection(config.resultCode, config.data)
 
-        // ✅ DASHCAM FIX: Get actual screen dimensions
-        val metrics = resources.displayMetrics
-        captureWidth = metrics.widthPixels
-        captureHeight = metrics.heightPixels
+        // ✅ CRITICAL FOR DASHCAM: Capture at FULL screen resolution
+        // This ensures we get the exact pixels from the dashcam feed
+        captureWidth = screenWidth
+        captureHeight = screenHeight
 
         val isLandscape = captureWidth > captureHeight
-        Log.d("FocusNet", "📱 Screen: ${captureWidth}x${captureHeight} ${if (isLandscape) "LANDSCAPE" else "PORTRAIT"}")
-        Log.d("FocusNet", "📐 Model: 416x416")
+        val aspectRatio = captureWidth.toFloat() / captureHeight.toFloat()
+
+        Log.d("FocusNet", "")
+        Log.d("FocusNet", "📷 CAPTURE CONFIGURATION")
+        Log.d("FocusNet", "   Resolution: ${captureWidth}x${captureHeight}")
+        Log.d("FocusNet", "   Orientation: ${if (isLandscape) "LANDSCAPE" else "PORTRAIT"}")
+        Log.d("FocusNet", "   Aspect Ratio: ${"%.3f".format(aspectRatio)}")
+        Log.d("FocusNet", "   Model Input: 416x416")
+        Log.d("FocusNet", "")
 
         projectionCallback = object : MediaProjection.Callback() {
             override fun onStop() {
                 super.onStop()
+                Log.w("FocusNet", "⚠️ MediaProjection stopped")
                 stopProjectionAndDetection()
             }
         }
         mediaProjection?.registerCallback(projectionCallback!!, null)
 
-        // ✅ CRITICAL: Capture at FULL screen resolution
+        // ✅ Create ImageReader at FULL screen resolution
         imageReader = ImageReader.newInstance(captureWidth, captureHeight, PixelFormat.RGBA_8888, 2)
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "FocusNetDisplay",
-            captureWidth, captureHeight,
-            metrics.densityDpi,
+            captureWidth,
+            captureHeight,
+            resources.displayMetrics.densityDpi,
             0,
-            imageReader?.surface, null, null
+            imageReader?.surface,
+            null,
+            null
         )
+
         addOverlay()
 
+        // ✅ Detection loop
         detectionJob = coroutineScope.launch {
             val reader = imageReader!!
             while (isActive && mediaProjection != null) {
@@ -229,13 +265,21 @@ class ScreenRecordService : Service() {
                     val bmp = imageToBitmapOptimized(img)
                     img.close()
 
+                    // Verify bitmap dimensions match capture
+                    if (bmp.width != captureWidth || bmp.height != captureHeight) {
+                        Log.w("FocusNet", "⚠️ Bitmap size mismatch: ${bmp.width}x${bmp.height} != ${captureWidth}x${captureHeight}")
+                    }
+
                     val input = prepareInput(bmp)
                     val output = runModel(input)
+
+                    // ✅ CRITICAL: Pass ORIGINAL bitmap dimensions for coordinate conversion
                     val dets = parseModelOutput(output, bmp.width, bmp.height)
 
                     updatePerformanceMetrics(dets, frameStart)
                     announceDetections(dets)
 
+                    // ✅ Pass bitmap dimensions to overlay (not capture dimensions)
                     withContext(Dispatchers.Main) {
                         overlayView?.setDetections(dets, bmp.width, bmp.height)
                     }
@@ -342,6 +386,7 @@ class ScreenRecordService : Service() {
         }
     }
 
+    // ✅ OPTIMIZED: Letterbox resize with detailed logging
     private fun prepareInput(bitmap: Bitmap): Array<Array<Array<FloatArray>>> {
         val modelSize = 416
         val processed = letterboxResize(bitmap, modelSize, modelSize)
@@ -364,24 +409,39 @@ class ScreenRecordService : Service() {
         val srcW = bitmap.width
         val srcH = bitmap.height
 
+        // Calculate scale to fit within target while preserving aspect ratio
         val scale = minOf(targetW.toFloat() / srcW, targetH.toFloat() / srcH)
         val scaledW = (srcW * scale).toInt()
         val scaledH = (srcH * scale).toInt()
 
+        // Scale the image
         val scaled = Bitmap.createScaledBitmap(bitmap, scaledW, scaledH, true)
+
+        // Create letterboxed image with gray padding
         val result = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(result)
         canvas.drawColor(Color.rgb(114, 114, 114))
 
+        // Center the scaled image
         val left = (targetW - scaledW) / 2f
         val top = (targetH - scaledH) / 2f
         canvas.drawBitmap(scaled, left, top, null)
 
+        // ✅ Store letterbox parameters for coordinate transformation
         letterboxOffsetX = left
         letterboxOffsetY = top
         letterboxScale = scale
+        letterboxScaledWidth = scaledW
+        letterboxScaledHeight = scaledH
 
-        Log.d("FocusNet", "📦 Letterbox: ${srcW}x${srcH} → ${scaledW}x${scaledH}, offset=(${left.toInt()},${top.toInt()}), scale=${"%.3f".format(scale)}")
+        if (frameCount == 0) { // Log only once
+            Log.d("FocusNet", "📦 LETTERBOX TRANSFORM")
+            Log.d("FocusNet", "   Source: ${srcW}x${srcH}")
+            Log.d("FocusNet", "   Scaled: ${scaledW}x${scaledH}")
+            Log.d("FocusNet", "   Offset: (${left.toInt()}, ${top.toInt()})")
+            Log.d("FocusNet", "   Scale: ${"%.4f".format(scale)}")
+            Log.d("FocusNet", "   Target: ${targetW}x${targetH}")
+        }
 
         scaled.recycle()
         return result
@@ -392,7 +452,7 @@ class ScreenRecordService : Service() {
         try {
             tflite?.run(input, output)
         } catch (e: Exception) {
-            Log.e("FocusNet", "❌ Inference error: ${e.message}")
+            Log.e("FocusNet", "❌ Inference error: ${e.message}", e)
         }
         return output
     }
@@ -413,7 +473,7 @@ class ScreenRecordService : Service() {
         val modelSize = 416f
 
         for (i in 0 until numBoxes) {
-            // Get normalized coordinates [0,1]
+            // ✅ STEP 1: Get normalized coordinates [0,1] from model
             val xc_norm = preds[0][i]
             val yc_norm = preds[1][i]
             val w_norm = preds[2][i]
@@ -432,23 +492,26 @@ class ScreenRecordService : Service() {
 
             if (bestScore < confThreshold) continue
 
-            // ✅ STEP 1: Convert normalized [0,1] to model space [0,416]
+            // ✅ STEP 2: Convert normalized [0,1] to model pixel space [0,416]
             val xc_model = xc_norm * modelSize
             val yc_model = yc_norm * modelSize
             val w_model = w_norm * modelSize
             val h_model = h_norm * modelSize
 
-            // ✅ STEP 2: Remove letterbox padding
-            val xc_unpad = xc_model - letterboxOffsetX
-            val yc_unpad = yc_model - letterboxOffsetY
+            // ✅ STEP 3: Remove letterbox padding
+            // The model sees a 416x416 image with gray bars
+            // We need to map back to the scaled content area
+            val xc_unpadded = xc_model - letterboxOffsetX
+            val yc_unpadded = yc_model - letterboxOffsetY
 
-            // ✅ STEP 3: Scale back to original image size
-            val xc_original = xc_unpad / letterboxScale
-            val yc_original = yc_unpad / letterboxScale
+            // ✅ STEP 4: Scale back to original image dimensions
+            // letterboxScale is how much we shrunk the original image
+            val xc_original = xc_unpadded / letterboxScale
+            val yc_original = yc_unpadded / letterboxScale
             val w_original = w_model / letterboxScale
             val h_original = h_model / letterboxScale
 
-            // ✅ STEP 4: Convert center-based to corner-based coordinates
+            // ✅ STEP 5: Convert center-based to corner-based coordinates
             val left = (xc_original - w_original / 2f).coerceIn(0f, imageW.toFloat())
             val top = (yc_original - h_original / 2f).coerceIn(0f, imageH.toFloat())
             val right = (xc_original + w_original / 2f).coerceIn(0f, imageW.toFloat())
@@ -457,7 +520,7 @@ class ScreenRecordService : Service() {
             val boxWidth = right - left
             val boxHeight = bottom - top
 
-            // Filter invalid boxes
+            // ✅ STEP 6: Filter invalid detections
             if (boxWidth < 20f || boxHeight < 20f) continue
             if (boxWidth > imageW * 0.85f || boxHeight > imageH * 0.85f) continue
 
@@ -473,7 +536,7 @@ class ScreenRecordService : Service() {
         val final = nonMaxSuppression(rawDetections, iouThreshold)
 
         if (final.isNotEmpty()) {
-            Log.d("FocusNet", "✅ ${final.size} detections (${(confThreshold * 100).toInt()}% conf)")
+            Log.d("FocusNet", "✅ ${final.size} detections @ ${(confThreshold * 100).toInt()}% conf")
         }
 
         return final
@@ -525,6 +588,7 @@ class ScreenRecordService : Service() {
             FileInputStream(afd.fileDescriptor).channel
                 .map(FileChannel.MapMode.READ_ONLY, afd.startOffset, afd.declaredLength)
         } catch (e: Exception) {
+            Log.e("FocusNet", "❌ Model file error: $filename", e)
             null
         }
     }
@@ -532,6 +596,7 @@ class ScreenRecordService : Service() {
     private fun addOverlay() {
         if (overlayAdded) return
         overlayView = OverlayView(this)
+
         val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
@@ -549,10 +614,14 @@ class ScreenRecordService : Service() {
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         )
+
         try {
             windowManager?.addView(overlayView, params)
             overlayAdded = true
-        } catch (_: Exception) {}
+            Log.d("FocusNet", "✅ Overlay added")
+        } catch (e: Exception) {
+            Log.e("FocusNet", "❌ Overlay error: ${e.message}")
+        }
     }
 
     private fun removeOverlay() {
@@ -569,7 +638,7 @@ class ScreenRecordService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
             nm?.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "FocusNet", NotificationManager.IMPORTANCE_LOW)
+                NotificationChannel(CHANNEL_ID, "FocusNet Detection", NotificationManager.IMPORTANCE_LOW)
             )
         }
     }
@@ -582,13 +651,15 @@ class ScreenRecordService : Service() {
 
         val stopIntent = Intent(this, ScreenRecordService::class.java).apply { action = STOP_RECORDING }
         val stopPending = PendingIntent.getService(this, 0, stopIntent, PendingIntent.FLAG_IMMUTABLE)
+
         val notif = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("$modelName Detecting")  // ✅ Shows model name
-            .setContentText("Threshold: ${(userConfidenceThreshold * 100).toInt()}%")
+            .setContentTitle("$modelName Active")
+            .setContentText("Conf: ${(userConfidenceThreshold * 100).toInt()}%")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPending)
             .setOngoing(true)
             .build()
+
         startForeground(NOTIF_ID, notif)
     }
 
@@ -620,6 +691,7 @@ class ScreenRecordService : Service() {
         tts?.speak(msg, TextToSpeech.QUEUE_FLUSH, null, null)
     }
 
+    // ✅ OVERLAY: Scales from capture dimensions to screen
     class OverlayView(ctx: Context) : View(ctx) {
 
         private val boxPaint = Paint().apply {
@@ -631,14 +703,14 @@ class ScreenRecordService : Service() {
 
         private val textPaint = Paint().apply {
             color = Color.WHITE
-            textSize = 44f
+            textSize = 48f
             style = Paint.Style.FILL
             isAntiAlias = true
             typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
         }
 
         private val bgPaint = Paint().apply {
-            color = Color.argb(210, 0, 0, 0)
+            color = Color.argb(220, 0, 0, 0)
             style = Paint.Style.FILL
         }
 
@@ -646,10 +718,10 @@ class ScreenRecordService : Service() {
         private var capW = 1
         private var capH = 1
 
-        fun setDetections(list: List<Detection>, w: Int, h: Int) {
+        fun setDetections(list: List<Detection>, captureWidth: Int, captureHeight: Int) {
             dets = list
-            capW = if (w > 0) w else 1
-            capH = if (h > 0) h else 1
+            capW = if (captureWidth > 0) captureWidth else 1
+            capH = if (captureHeight > 0) captureHeight else 1
             postInvalidate()
         }
 
@@ -658,26 +730,31 @@ class ScreenRecordService : Service() {
 
             if (dets.isEmpty() || width == 0 || height == 0) return
 
+            // ✅ CRITICAL: Scale from capture dimensions to actual screen overlay
             val scaleX = width.toFloat() / capW
             val scaleY = height.toFloat() / capH
 
             for (det in dets) {
+                // Scale box coordinates
                 val l = det.box.left * scaleX
                 val t = det.box.top * scaleY
                 val r = det.box.right * scaleX
                 val b = det.box.bottom * scaleY
 
+                // Draw bounding box
                 canvas.drawRect(l, t, r, b, boxPaint)
 
+                // Draw label with background
                 val label = "${det.label} ${(det.score * 100).toInt()}%"
                 val textW = textPaint.measureText(label)
-                val textH = textPaint.textSize + 14f
+                val textH = textPaint.textSize + 16f
 
                 val labelTop = (t - textH).coerceAtLeast(0f)
                 val labelBottom = t
+                val labelRight = (l + textW + 24f).coerceAtMost(width.toFloat())
 
-                canvas.drawRect(l, labelTop, l + textW + 20f, labelBottom, bgPaint)
-                canvas.drawText(label, l + 10f, labelBottom - 10f, textPaint)
+                canvas.drawRect(l, labelTop, labelRight, labelBottom, bgPaint)
+                canvas.drawText(label, l + 12f, labelBottom - 12f, textPaint)
             }
         }
     }

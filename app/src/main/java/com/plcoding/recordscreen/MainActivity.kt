@@ -304,14 +304,13 @@ fun HazardMenuScreen(
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .aspectRatio(1f), // ✅ keeps each cell square
+                                .aspectRatio(1f),
                             contentAlignment = Alignment.Center
                         ) {
                             HazardButton(item)
                         }
                     }
 
-                    // ✅ if the row only has one item, keep layout symmetrical
                     if (rowItems.size == 1) {
                         Spacer(
                             modifier = Modifier
@@ -609,17 +608,10 @@ fun AboutUsScreen(onBack: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DevModeScreen(onBack: () -> Unit) {
-    // --- Data Collection ---
     val isServiceRunning by ScreenRecordService.isServiceRunning.collectAsStateWithLifecycle()
     val performanceMetrics by ScreenRecordService.performanceMetrics.collectAsStateWithLifecycle()
     val hazardStats by ScreenRecordService.hazardStats.collectAsStateWithLifecycle()
     val recentDetections by ScreenRecordService.recentDetections.collectAsStateWithLifecycle()
-
-    // --- State for UI Controls ---
-    var debugMode by remember { mutableStateOf(false) }
-    var loggingEnabled by remember { mutableStateOf(true) }
-
-
 
     Scaffold(
         topBar = {
@@ -735,17 +727,6 @@ fun DevModeScreen(onBack: () -> Unit) {
     }
 }
 
-data class ModelComparison(
-    val ssdRecall: Float,
-    val ssdPrecision: Float,
-    val ssdF1Score: Float,
-    val ssdAccuracy: Float,
-    val focusNetRecall: Float,
-    val focusNetPrecision: Float,
-    val focusNetF1Score: Float,
-    val focusNetAccuracy: Float
-)
-
 @Composable
 fun PerformanceMetricCard(title: String, value: String, color: Color) {
     Card(
@@ -799,43 +780,6 @@ fun HazardStatsCard(title: String, count: Int, color: Color) {
                 fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
                 color = color
-            )
-        }
-    }
-}
-
-@Composable
-fun ComparisonRow(metric: String, ssdValue: Float, focusNetValue: Float) {
-    val improvement = ((focusNetValue - ssdValue) / ssdValue * 100)
-
-    Column(modifier = Modifier.padding(vertical = 6.dp)) {
-        Text(
-            text = metric,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Medium,
-            color = Color.White
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "SSD: ${String.format("%.1f%%", ssdValue * 100)}",
-                fontSize = 14.sp,
-                color = Color(0xFFFF9800)
-            )
-            Text(
-                text = "FocusNet: ${String.format("%.1f%%", focusNetValue * 100)}",
-                fontSize = 14.sp,
-                color = Color(0xFF81C784) // Light Green
-            )
-            Text(
-                text = "${if (improvement > 0) "+" else ""}${improvement.toInt()}%",
-                fontSize = 14.sp,
-                color = if (improvement > 0) Color(0xFF4CAF50) else Color(0xFFF44336),
-                fontWeight = FontWeight.Bold
             )
         }
     }

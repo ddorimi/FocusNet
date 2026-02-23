@@ -18,7 +18,7 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // ✅ Added: Optimize for TensorFlow Lite
+        // Added: optimize for tflite
         ndk {
             abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
         }
@@ -54,7 +54,6 @@ android {
         compose = true
     }
 
-    // ✅ Added: Packaging options for TFLite
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -64,12 +63,8 @@ android {
 }
 
 dependencies {
-    // ✅ FIXED: Updated TensorFlow Lite to latest stable version
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
-
-    // ✅ REMOVED: PyTorch (not needed)
-    // implementation("org.pytorch:pytorch_android_lite:1.10.0")
 
     // Compose & Lifecycle
     implementation(libs.androidx.lifecycle.runtime.compose)
